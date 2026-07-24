@@ -1,0 +1,105 @@
+# Jenga-AI V2 — QA Call Transcript Scoring
+# Multi-head binary classification for call quality assurance
+# 6 heads: opening (1), listening (5), proactiveness (3), resolution (5), hold (2), closing (1)
+# Total: 17 binary sub-metrics
+#
+# Usage:
+#   python -m jenga_nlp train --config configs/qa_scoring.yaml
+#   python examples/run_qa_training.py --config configs/qa_scoring.yaml
+
+project_name: qa_call_scoring
+
+model:
+  base_model: distilbert-base-uncased 
+  dropout: 0.1
+  freeze_encoder_layers: 0
+  gradient_checkpointing: false
+
+tokenizer:
+  max_length: 512
+  padding: max_length
+  truncation: true
+
+training:
+  output_dir: ./results/qa_scoring2
+  learning_rate: 2.0e-5
+  batch_size: 4
+  num_epochs: 5
+  weight_decay: 0.01
+  warmup_steps: 20
+  max_grad_norm: 1.0
+  gradient_accumulation_steps: 2
+  use_amp: false
+  device: auto
+  early_stopping_patience: 3
+  metric_for_best_model: eval_loss
+  greater_is_better: false
+  logging:
+    service: mlflow
+    experiment_name: qa_scoring
+    log_every_n_steps: 5
+  checkpoint:
+    save_every_n_epochs: 1
+    save_best: true
+    max_checkpoints: 2
+  data:
+    test_size: 0.2
+    seed: 42
+    num_workers: 0
+
+tasks:
+  - name: qa_scoring
+    type: qa_scoring
+    # data_path: data/sample_qa_transcripts.jsonl
+    data_path: data/data/synthetic_qa.json
+    text_column: transcript
+    label_column: labels
+    heads:
+      - name: opening
+        num_labels: 1
+        weight: 1.0
+        dropout: 0.1
+      - name: listening
+        num_labels: 5
+        weight: 1.5
+        dropout: 0.1
+      - name: proactiveness
+        num_labels: 3
+        weight: 1.0
+        dropout: 0.1
+      - name: resolution
+        num_labels: 5
+        weight: 2.0
+        dropout: 0.1
+      - name: hold
+        num_labels: 2
+        weight: 0.5
+        dropout: 0.1
+      - name: closing
+        num_labels: 1
+        weight: 1.0
+        dropout: 0.1
+    label_maps:
+      opening:
+        0: greeting_quality
+      listening:
+        0: active_listening
+        1: paraphrasing
+        2: empathy
+        3: patience
+        4: clarification
+      proactiveness:
+        0: initiative
+        1: anticipation
+        2: follow_up
+      resolution:
+        0: problem_identification
+        1: solution_accuracy
+        2: completeness
+        3: first_call_resolution
+        4: escalation_handling
+      hold:
+        0: hold_notification
+        1: hold_duration
+      closing:
+        0: closing_quality

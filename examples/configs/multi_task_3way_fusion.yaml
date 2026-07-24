@@ -1,0 +1,135 @@
+# Jenga-NLP — 3-Task Attention Fusion Experiment
+#
+# Single shared DistilBERT encoder with attention fusion across 3 tasks:
+#   1. Fraud Detection (binary classification)
+#   2. Sentiment Analysis (3-class: negative/neutral/positive)
+#   3. QA Call Scoring (6-head multi-label)
+#
+# The attention fusion mechanism learns task-specific embeddings that
+# modulate the shared encoder representations via a gated attention layer.
+#
+# Usage:
+#   python -m jenga_ai train --config configs/multi_task_3way_fusion.yaml
+
+project_name: security_nlp_3task
+
+model:
+  base_model: distilbert-base-uncased
+  hidden_size: 768
+  dropout: 0.1
+  freeze_encoder_layers: 0
+  gradient_checkpointing: false
+  fusion:
+    type: attention
+    dropout: 0.1
+    use_residual: true
+    gate_init_value: 0.5
+
+tokenizer:
+  max_length: 256
+  padding: max_length
+  truncation: true
+
+training:
+  output_dir: ./results/3task_fusion
+  learning_rate: 2.0e-5
+  batch_size: 4
+  num_epochs: 5
+  weight_decay: 0.01
+  warmup_steps: 20
+  max_grad_norm: 1.0
+  gradient_accumulation_steps: 1
+  use_amp: false
+  device: auto
+  early_stopping_patience: 5
+  metric_for_best_model: eval_loss
+  greater_is_better: false
+  task_sampling: proportional
+  temperature: 2.0
+  logging:
+    service: mlflow
+    experiment_name: security_3task_fusion
+    log_every_n_steps: 5
+  checkpoint:
+    save_every_n_epochs: 1
+    save_best: true
+    max_checkpoints: 2
+  data:
+    test_size: 0.2
+    seed: 42
+    num_workers: 0
+
+tasks:
+  # Task 1: M-PESA Fraud Detection (binary)
+  - name: fraud_detection
+    type: single_label_classification
+    data_path: /home/naynek/jenga_nlp/examples/fixtures/sample_classification.jsonl
+    text_column: text
+    label_column: label
+    heads:
+      - name: fraud
+        num_labels: 2
+        weight: 1.0
+        dropout: 0.1
+
+  # Task 2: Customer Sentiment (3-class)
+  - name: sentiment_analysis
+    type: single_label_classification
+    data_path: /home/naynek/jenga_nlp/examples/fixtures/sample_sentiment.jsonl
+    text_column: text
+    label_column: label
+    heads:
+      - name: sentiment
+        num_labels: 3
+        weight: 1.0
+        dropout: 0.1
+
+  # Task 3: Call QA Scoring (6 heads, 17 sub-metrics)
+  - name: call_quality
+    type: question_answering
+    data_path: /home/naynek/jenga_nlp/examples/fixtures/sample_qa_transcripts.jsonl
+    text_column: transcript
+    label_column: labels
+    label_maps:
+      opening:
+        0: greeting
+      listening:
+        0: acknowledgment
+        1: empathy
+        2: clarification
+        3: active_listening
+        4: patience
+      proactiveness:
+        0: initiative
+        1: follow_up
+        2: suggestions
+      resolution:
+        0: identified_issue
+        1: provided_solution
+        2: confirmed_resolution
+        3: set_expectations
+        4: offered_alternatives
+      hold:
+        0: asked_permission
+        1: explained_reason
+      closing:
+        0: proper_farewell
+    heads:
+      - name: opening
+        num_labels: 1
+        weight: 1.0
+      - name: listening
+        num_labels: 5
+        weight: 1.5
+      - name: proactiveness
+        num_labels: 3
+        weight: 1.0
+      - name: resolution
+        num_labels: 5
+        weight: 2.0
+      - name: hold
+        num_labels: 2
+        weight: 0.5
+      - name: closing
+        num_labels: 1
+        weight: 1.0

@@ -1,0 +1,58 @@
+# Jenga-AI V2 — Multi-Task Classification Experiment
+# M-PESA fraud detection (single-label binary classification)
+#
+# Usage:
+#   python -m jenga_ai train --config configs/multi_task_classification.yaml
+#   python examples/run_experiment.py --config configs/multi_task_classification.yaml
+
+project_name: mpesa_fraud_detection
+
+model:
+  base_model: distilbert-base-uncased
+  dropout: 0.1
+  freeze_encoder_layers: 0
+  gradient_checkpointing: false
+
+tokenizer:
+  max_length: 128
+  padding: max_length
+  truncation: true
+
+training:
+  output_dir: ./results/mpesa_fraud
+  learning_rate: 2.0e-5
+  batch_size: 8
+  num_epochs: 3
+  weight_decay: 0.01
+  warmup_steps: 50
+  max_grad_norm: 1.0
+  gradient_accumulation_steps: 1
+  use_amp: false
+  device: auto
+  early_stopping_patience: 3
+  metric_for_best_model: eval_loss
+  greater_is_better: false
+  logging:
+    service: tensorboard
+    experiment_name: mpesa_fraud
+    log_every_n_steps: 5
+  checkpoint:
+    save_every_n_epochs: 1
+    save_best: true
+    max_checkpoints: 2
+  data:
+    test_size: 0.2
+    seed: 42
+    num_workers: 0
+
+tasks:
+  - name: fraud_detection
+    type: single_label_classification
+    data_path:  fixtures/sample_classification.jsonl
+    text_column: text
+    label_column: label
+    heads:
+      - name: fraud
+        num_labels: 2
+        weight: 1.0
+        dropout: 0.1

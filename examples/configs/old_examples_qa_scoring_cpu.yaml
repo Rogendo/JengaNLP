@@ -1,0 +1,88 @@
+project_name: old_examples_qa_scoring_cpu
+
+model:
+  base_model: hf-internal-testing/tiny-random-bert
+  dropout: 0.1
+
+tokenizer:
+  max_length: 256
+  padding: max_length
+  truncation: true
+
+tasks:
+  - name: call_qa_scoring
+    type: qa_scoring
+    data_path: /home/naynek/Desktop/Jenga-AI/examples/data/synthetic_qa_metrics_data_v01x.json
+    text_column: text
+    label_column: labels
+    heads:
+      - name: opening
+        num_labels: 1
+        weight: 1.0
+      - name: listening
+        num_labels: 5
+        weight: 1.5
+      - name: proactiveness
+        num_labels: 3
+        weight: 1.0
+      - name: resolution
+        num_labels: 5
+        weight: 2.0
+      - name: hold
+        num_labels: 2
+        weight: 0.5
+      - name: closing
+        num_labels: 1
+        weight: 1.0
+    label_maps:
+      opening:
+        0: mandatory_greeting
+      listening:
+        0: active_listening
+        1: empathy
+        2: paraphrasing
+        3: patience
+        4: clarification
+      proactiveness:
+        0: further_assistance
+        1: follow_up
+        2: proactive_guidance
+      resolution:
+        0: accurate_information
+        1: correct_procedure
+        2: complete_resolution
+        3: first_call_resolution
+        4: escalation_handling
+      hold:
+        0: hold_permission
+        1: thanked_after_hold
+      closing:
+        0: professional_closing
+
+training:
+  output_dir: /tmp/jenganlp_old_examples_qa_scoring_cpu
+  learning_rate: 0.00005
+  batch_size: 16
+  eval_batch_size: 16
+  num_epochs: 3
+  weight_decay: 0.0
+  warmup_steps: 0
+  max_grad_norm: 1.0
+  gradient_accumulation_steps: 1
+  use_amp: false
+  device: cpu
+  metric_for_best_model: eval_loss
+  greater_is_better: false
+  logging:
+    service: none
+    experiment_name: old_examples_qa_scoring_cpu
+    log_every_n_steps: 25
+  checkpoint:
+    save_every_n_epochs: 1
+    save_best: true
+    max_checkpoints: 1
+  data:
+    test_size: 0.2
+    seed: 42
+    num_workers: 0
+    pin_memory: false

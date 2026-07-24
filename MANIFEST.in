@@ -1,0 +1,14 @@
+# MANIFEST.in — controls which non-Python files are included in the sdist
+
+include LICENSE
+include CHANGELOG.md
+include README.md
+include requirements.txt
+
+recursive-include docs *.md *.rst *.txt
+recursive-include examples/configs *.yaml *.yml
+recursive-include examples/fixtures *.jsonl *.json *.csv
+
+global-exclude __pycache__
+global-exclude *.py[co]
+global-exclude *.egg-info

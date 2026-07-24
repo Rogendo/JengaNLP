@@ -1,0 +1,16 @@
+{"text": "Customer reports a normal account balance inquiry and asks for branch working hours.", "risk_score": 0.08}
+{"text": "User asks how to reset their mobile banking password through the official app.", "risk_score": 0.18}
+{"text": "Customer says an agent verified their account and resolved the failed transfer.", "risk_score": 0.22}
+{"text": "Support ticket mentions delayed settlement but no request for PIN or password.", "risk_score": 0.28}
+{"text": "Message asks the customer to confirm their phone number after a failed M-PESA reversal.", "risk_score": 0.42}
+{"text": "Caller says they received repeated unknown messages about reversing a transaction.", "risk_score": 0.51}
+{"text": "SMS asks the customer to call an unknown number to unlock a suspended wallet.", "risk_score": 0.66}
+{"text": "Customer reports a suspicious link claiming their mobile money account will expire today.", "risk_score": 0.74}
+{"text": "Message says urgent M-PESA reversal requires the customer to share their PIN immediately.", "risk_score": 0.92}
+{"text": "Caller claims to be from the bank and asks for one time password verification.", "risk_score": 0.88}
+{"text": "SMS promises a cash prize and requests the customer's national ID and PIN.", "risk_score": 0.96}
+{"text": "Customer lost their phone and reports many unauthorized login attempts overnight.", "risk_score": 0.81}
+{"text": "Agent followed the script, verified identity, and closed the complaint professionally.", "risk_score": 0.16}
+{"text": "Complaint mentions harassment, threats, and pressure to send money urgently.", "risk_score": 0.79}
+{"text": "Customer asks whether normal transaction limits apply during public holidays.", "risk_score": 0.12}
+{"text": "Unknown sender asks the user to forward an authentication code to avoid account closure.", "risk_score": 0.94}

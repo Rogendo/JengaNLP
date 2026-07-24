@@ -1,0 +1,49 @@
+project_name: old_examples_ner_cpu
+
+model:
+  base_model: hf-internal-testing/tiny-random-bert
+  dropout: 0.1
+
+tokenizer:
+  max_length: 256
+  padding: max_length
+  truncation: true
+
+tasks:
+  - name: child_helpline_ner
+    type: ner
+    data_path: /home/naynek/Desktop/Jenga-AI/examples/data/ner_synthetic_dataset_v1.jsonl
+    text_column: text
+    label_column: entities
+    heads:
+      - name: ner_head
+        num_labels: 1
+        weight: 1.0
+
+training:
+  output_dir: /tmp/jenganlp_old_examples_ner_cpu
+  learning_rate: 0.00005
+  batch_size: 8
+  eval_batch_size: 8
+  num_epochs: 1
+  weight_decay: 0.0
+  warmup_steps: 0
+  max_grad_norm: 1.0
+  gradient_accumulation_steps: 1
+  use_amp: false
+  device: cpu
+  metric_for_best_model: eval_loss
+  greater_is_better: false
+  logging:
+    service: none
+    experiment_name: old_examples_ner_cpu
+    log_every_n_steps: 25
+  checkpoint:
+    save_every_n_epochs: 1
+    save_best: true
+    max_checkpoints: 1
+  data:
+    test_size: 0.2
+    seed: 42
+    num_workers: 0
+    pin_memory: false

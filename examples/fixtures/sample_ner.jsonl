@@ -1,0 +1,12 @@
+{"text": "Grace reported abuse in Nairobi.", "entities": [{"start": 0, "end": 5, "label": "NAME"}, {"start": 15, "end": 20, "label": "INCIDENT_TYPE"}, {"start": 24, "end": 31, "label": "LOCATION"}]}
+{"text": "Asha called from Mombasa about neglect.", "entities": [{"start": 0, "end": 4, "label": "NAME"}, {"start": 17, "end": 24, "label": "LOCATION"}, {"start": 31, "end": 38, "label": "INCIDENT_TYPE"}]}
+{"text": "Kevin is a 12 year old boy in Kisumu.", "entities": [{"start": 0, "end": 5, "label": "NAME"}, {"start": 11, "end": 13, "label": "AGE"}, {"start": 23, "end": 26, "label": "GENDER"}, {"start": 30, "end": 36, "label": "LOCATION"}]}
+{"text": "The perpetrator John lives near Uhuru Market.", "entities": [{"start": 16, "end": 20, "label": "PERPETRATOR"}, {"start": 32, "end": 44, "label": "LANDMARK"}]}
+{"text": "Mary said the victim Brian is 9 years old.", "entities": [{"start": 0, "end": 4, "label": "NAME"}, {"start": 21, "end": 26, "label": "VICTIM"}, {"start": 30, "end": 31, "label": "AGE"}]}
+{"text": "Caller at 0712345678 reported harassment in Eldoret.", "entities": [{"start": 10, "end": 20, "label": "PHONE_NUMBER"}, {"start": 30, "end": 40, "label": "INCIDENT_TYPE"}, {"start": 44, "end": 51, "label": "LOCATION"}]}
+{"text": "Fatuma reported child labor near Nakuru.", "entities": [{"start": 0, "end": 6, "label": "NAME"}, {"start": 16, "end": 27, "label": "INCIDENT_TYPE"}, {"start": 33, "end": 39, "label": "LOCATION"}]}
+{"text": "Peter from Garissa mentioned domestic violence.", "entities": [{"start": 0, "end": 5, "label": "NAME"}, {"start": 11, "end": 18, "label": "LOCATION"}, {"start": 30, "end": 47, "label": "INCIDENT_TYPE"}]}
+{"text": "Officer Wanjiku met Anna at City Hospital.", "entities": [{"start": 8, "end": 15, "label": "NAME"}, {"start": 20, "end": 24, "label": "VICTIM"}, {"start": 28, "end": 41, "label": "LANDMARK"}]}
+{"text": "The case involves a 15 year old girl named Neema.", "entities": [{"start": 20, "end": 22, "label": "AGE"}, {"start": 32, "end": 36, "label": "GENDER"}, {"start": 43, "end": 48, "label": "NAME"}]}
+{"text": "Mohamed reported assault by Ali in Lamu.", "entities": [{"start": 0, "end": 7, "label": "NAME"}, {"start": 17, "end": 24, "label": "INCIDENT_TYPE"}, {"start": 28, "end": 31, "label": "PERPETRATOR"}, {"start": 35, "end": 39, "label": "LOCATION"}]}
+{"text": "A victim named Pendo called from Arusha.", "entities": [{"start": 15, "end": 20, "label": "VICTIM"}, {"start": 33, "end": 39, "label": "LOCATION"}]}

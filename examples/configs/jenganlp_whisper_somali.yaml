@@ -1,0 +1,95 @@
+model_name: openai/whisper-small
+language: so
+task: transcribe
+output_dir: results/whisper-somali
+learning_rate: 1.0e-5
+num_epochs: 3
+batch_size: 4
+eval_batch_size: 8
+gradient_accumulation_steps: 2
+warmup_steps: 500
+max_grad_norm: 1.0
+device: auto
+fp16: true
+max_steps: null
+eval_steps: 500
+save_steps: 500
+logging_steps: 25
+generation_max_length: 225
+gradient_checkpointing: true
+load_best_model_at_end: true
+metric_for_best_model: wer
+greater_is_better: false
+save_total_limit: 3
+optim: adamw_torch
+dataloader_num_workers: 2
+push_to_hub: false
+hub_model_id: null
+hub_strategy: every_save
+hub_private: false
+use_peft: false
+peft_config:
+  r: 32
+  lora_alpha: 64
+  target_modules: [q_proj, v_proj]
+  lora_dropout: 0.1
+
+# Dataset loading contract for ASR fine-tuning.
+# Supported sources: manifest, huggingface, local_cv, local_ddd, custom_tsv, local, multi.
+# Manifest rows should point to local audio files. Hugging Face sources can provide audio arrays.
+dataset:
+  source: manifest
+  train_manifest: data/somali_train.jsonl
+  eval_manifest: data/somali_eval.jsonl
+  audio_column: audio
+  text_column: text
+  duration_column: duration_s
+  train_split: train
+  eval_split: validation
+  streaming: true
+  trust_remote_code: true
+  sentence_column: auto
+  language_filter: null
+  local_path: null
+  local_format: null
+  excel_file: null
+  sources: []
+  num_train_samples: null
+  num_eval_samples: null
+
+# Expected manifest row shape:
+#   {"audio": "/path/to/audio.wav", "text": "transcript text", "duration_s": 12.3}
+preprocessing:
+  sampling_rate: 16000
+  min_audio_duration_s: 1.0
+  max_audio_duration_s: 30.0
+  max_transcript_chars: 1000
+  strip_text: true
+  lowercase: false
+  normalize_text: false
+  validate_audio_paths: false
+
+integrations:
+  - type: mlflow
+    enabled: true
+    params:
+      tracking_uri: file:./mlruns
+      experiment_name: whisper-somali-training
+  - type: tensorboard
+    enabled: true
+    params:
+      log_dir: results/whisper-somali/tensorboard
+  - type: wandb
+    enabled: false
+    params:
+      project: whisper-somali
+      entity: null
+  - type: labelstudio
+    enabled: false
+    params:
+      export_dir: results/whisper-somali/labelstudio
+
+# Backward-compatible top-level manifest fields are still accepted, but new
+# configs should prefer dataset.train_manifest and dataset.eval_manifest.
+train_manifest: null
+eval_manifest: null

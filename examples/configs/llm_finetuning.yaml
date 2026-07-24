@@ -1,0 +1,55 @@
+# Jenga-AI V2 — LLM Fine-Tuning with LoRA
+# Instruction-tuned causal language model
+#
+# Usage:
+#   python -m jenga_ai llm-train --config configs/llm_finetuning.yaml
+#   python examples/run_llm_finetuning.py --config configs/llm_finetuning.yaml
+
+model_name: distilgpt2
+task_type: causal_lm
+
+lora:
+  enabled: true
+  rank: 8
+  alpha: 16
+  target_modules:
+    - c_attn
+    - c_proj
+  dropout: 0.05
+  bias: none
+
+quantization:
+  enabled: false
+
+distillation:
+  enabled: false
+
+data:
+  path: fixtures/sample_instructions.jsonl
+  format: json
+  text_column: text
+  response_column: response
+  instruction_column: instruction
+  max_length: 256
+  test_size: 0.1
+
+training:
+  output_dir: ./results/llm_finetuning
+  learning_rate: 2.0e-4
+  num_epochs: 3
+  batch_size: 2
+  gradient_accumulation_steps: 4
+  warmup_ratio: 0.03
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  fp16: false
+  bf16: false
+  eval_strategy: epoch
+  save_strategy: epoch
+  logging_steps: 5
+  save_total_limit: 2
+
+logging:
+  service: tensorboard #mlflow 
+  experiment_name: llm_finetuning
+  log_every_n_steps: 5

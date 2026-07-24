@@ -1,0 +1,20 @@
+{"text": "Received M-PESA confirmation for KSh 50000 sent to unknown number at 3AM", "label": 1}
+{"text": "Payment of KSh 200 for airtime top-up via M-PESA", "label": 0}
+{"text": "Multiple rapid transactions totaling KSh 500000 within 10 minutes to different accounts", "label": 1}
+{"text": "Salary deposit of KSh 45000 received from employer account", "label": 0}
+{"text": "Urgent request to send KSh 100000 to reverse a wrong transaction", "label": 1}
+{"text": "Monthly rent payment of KSh 25000 via Lipa Na M-PESA", "label": 0}
+{"text": "Account shows withdrawal of KSh 200000 but customer denies making the transaction", "label": 1}
+{"text": "School fees payment of KSh 35000 to registered institution", "label": 0}
+{"text": "SIM swap followed by immediate large transfer of KSh 150000", "label": 1}
+{"text": "Utility bill payment of KSh 3500 for Kenya Power", "label": 0}
+{"text": "Customer reports receiving phishing SMS about M-PESA account verification", "label": 1}
+{"text": "Regular grocery purchase of KSh 5000 at Naivas supermarket", "label": 0}
+{"text": "Unusual login from foreign IP address followed by funds transfer", "label": 1}
+{"text": "Paybill payment of KSh 1500 for internet subscription", "label": 0}
+{"text": "Agent reports customer using forged ID for M-PESA registration", "label": 1}
+{"text": "KSh 500 withdrawal from M-PESA at local agent shop", "label": 0}
+{"text": "Repeated failed PIN attempts followed by successful transaction from new device", "label": 1}
+{"text": "Church tithe contribution of KSh 2000 via M-PESA", "label": 0}
+{"text": "Account funded through multiple small deposits then immediately drained in one transfer", "label": 1}
+{"text": "Bus fare payment of KSh 150 via M-PESA express", "label": 0}

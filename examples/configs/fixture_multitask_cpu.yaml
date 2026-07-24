@@ -1,0 +1,83 @@
+project_name: fixture_multitask_cpu
+
+model:
+  base_model: distilbert-base-uncased
+  dropout: 0.1
+
+tokenizer:
+  max_length: 256
+  padding: max_length
+  truncation: true
+
+tasks:
+  - name: mpesa_fraud_detection
+    type: single_label_classification
+    data_path: /home/naynek/jenga_nlp/examples/fixtures/sample_classification.jsonl
+    text_column: text
+    label_column: label
+    heads:
+      - name: fraud_head
+        num_labels: 2
+
+  - name: mpesa_sentiment
+    type: sentiment
+    data_path: /home/naynek/jenga_nlp/examples/fixtures/sample_sentiment.jsonl
+    text_column: text
+    label_column: label
+    heads:
+      - name: sentiment_head
+        num_labels: 3
+
+  - name: call_qa_scoring
+    type: qa_scoring
+    data_path: /home/naynek/jenga_nlp/examples/fixtures/sample_qa_transcripts.jsonl
+    text_column: transcript
+    label_column: labels
+    heads:
+      - name: opening
+        num_labels: 1
+        weight: 1.0
+      - name: listening
+        num_labels: 5
+        weight: 1.5
+      - name: proactiveness
+        num_labels: 3
+        weight: 1.0
+      - name: resolution
+        num_labels: 5
+        weight: 2.0
+      - name: hold
+        num_labels: 2
+        weight: 0.5
+      - name: closing
+        num_labels: 1
+        weight: 1.0
+
+training:
+  output_dir: /tmp/jenganlp_fixture_multitask_cpu
+  learning_rate: 0.00005
+  batch_size: 2
+  eval_batch_size: 2
+  num_epochs: 1
+  weight_decay: 0.0
+  warmup_steps: 0
+  max_grad_norm: 1.0
+  gradient_accumulation_steps: 1
+  use_amp: false
+  device: cpu
+  task_sampling: round_robin
+  metric_for_best_model: eval_loss
+  greater_is_better: false
+  logging:
+    service: none
+    experiment_name: fixture_multitask_cpu
+    log_every_n_steps: 1
+  checkpoint:
+    save_every_n_epochs: 1
+    save_best: true
+    max_checkpoints: 1
+  data:
+    test_size: 0.2
+    seed: 42
+    num_workers: 0
+    pin_memory: false

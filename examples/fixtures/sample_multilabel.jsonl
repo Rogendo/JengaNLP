@@ -1,0 +1,12 @@
+{"text": "Customer received a fake M-PESA verification SMS asking them to share their PIN", "labels": {"risk_tags": [1, 1, 0, 1]}}
+{"text": "Normal monthly payment for electricity bill through Paybill", "labels": {"risk_tags": [0, 0, 0, 0]}}
+{"text": "SIM swap happened before a large transfer from the wallet", "labels": {"risk_tags": [1, 0, 1, 0]}}
+{"text": "Caller pretended to be support and asked for OTP to reverse a transaction", "labels": {"risk_tags": [1, 1, 1, 1]}}
+{"text": "Customer bought airtime for their own Safaricom number", "labels": {"risk_tags": [0, 0, 0, 0]}}
+{"text": "Multiple failed PIN attempts followed by login from a new device", "labels": {"risk_tags": [1, 0, 1, 0]}}
+{"text": "Fraudster asked the customer to send money first to unlock a prize", "labels": {"risk_tags": [1, 0, 0, 1]}}
+{"text": "Agent deposit was completed at a registered branch", "labels": {"risk_tags": [0, 0, 0, 0]}}
+{"text": "Message contained suspicious link and requested account password reset", "labels": {"risk_tags": [1, 1, 1, 1]}}
+{"text": "Customer paid school fees to a known institution", "labels": {"risk_tags": [0, 0, 0, 0]}}
+{"text": "Unauthorized transfer reported after customer shared one time password", "labels": {"risk_tags": [1, 0, 1, 1]}}
+{"text": "Regular supermarket checkout using M-PESA express", "labels": {"risk_tags": [0, 0, 0, 0]}}

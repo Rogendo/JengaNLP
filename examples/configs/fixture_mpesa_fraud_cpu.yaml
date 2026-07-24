@@ -1,0 +1,49 @@
+project_name: fixture_mpesa_fraud_cpu
+
+model:
+  base_model: distilbert-base-uncased
+  dropout: 0.1
+
+tokenizer:
+  max_length: 64
+  padding: max_length
+  truncation: true
+
+tasks:
+  - name: mpesa_fraud_detection
+    type: single_label_classification
+    data_path: /home/naynek/jenga_nlp/examples/fixtures/sample_classification.jsonl
+    text_column: text
+    label_column: label
+    heads:
+      - name: fraud_head
+        num_labels: 2
+
+training:
+  output_dir: /tmp/jenganlp_fixture_mpesa_fraud_cpu
+  learning_rate: 0.00005
+  batch_size: 2
+  eval_batch_size: 2
+  num_epochs: 3
+  weight_decay: 0.0
+  warmup_steps: 0
+  max_grad_norm: 1.0
+  gradient_accumulation_steps: 1
+  use_amp: false
+  device: cpu
+  metric_for_best_model: eval_loss
+  greater_is_better: false
+  logging:
+    service: mlflow
+    experiment_name: fixture_mpesa_fraud_cpu
+    tracking_uri: http://127.0.0.1:5000
+    log_every_n_steps: 1
+  checkpoint:
+    save_every_n_epochs: 1
+    save_best: true
+    max_checkpoints: 1
+  data:
+    test_size: 0.2
+    seed: 42
+    num_workers: 0
+    pin_memory: false
