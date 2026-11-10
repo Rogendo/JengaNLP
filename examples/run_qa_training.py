@@ -5,7 +5,7 @@ Trains a multi-head model for call quality assurance with 6 quality areas:
 opening, listening, proactiveness, resolution, hold, closing.
 
 Usage:
-    python examples/run_qa_training.py --config configs/qa_scoring.yaml
+    python examples/run_qa_training.py --config examples/configs/fixture_qa_scoring_cpu.yaml
 """
 
 from __future__ import annotations
@@ -15,12 +15,12 @@ import logging
 import sys
 from pathlib import Path
 
-# Add project root to path for standalone execution
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# Allow running from a source checkout without `pip install -e .`
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run Jenga-AI QA scoring training")
+    parser = argparse.ArgumentParser(description="Run JengaNLP QA scoring training")
     parser.add_argument("--config", required=True, help="Path to QA YAML config")
     parser.add_argument("--output-dir", default=None, help="Override output directory")
     parser.add_argument("--device", default=None, help="Override device (auto/cuda/cpu/mps)")
@@ -36,11 +36,13 @@ def main() -> None:
 
     from transformers import AutoTokenizer
 
-    from jenga_ai.core.config import ExperimentConfig, TaskType
-    from jenga_ai.core.model import MultiTaskModel
-    from jenga_ai.data.processor import DataProcessor
-    from jenga_ai.tasks.qa import QAScoringTask
-    from jenga_ai.training.trainer import Trainer
+    from jenga_nlp.core.config import ExperimentConfig, TaskType
+    from jenga_nlp.core.model import MultiTaskModel
+    from jenga_nlp.data.processor import DataProcessor
+    from jenga_nlp.tasks.qa import QAScoringTask
+    from jenga_nlp.training.trainer import Trainer
+
+    QA_TYPES = {TaskType.QA_SCORING, TaskType.QUESTION_ANSWERING}
 
     # Load config
     config_path = Path(args.config)
@@ -59,13 +61,13 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Verify QA task type
-    qa_tasks = [t for t in config.tasks if t.type == TaskType.QA]
+    qa_tasks = [t for t in config.tasks if t.type in QA_TYPES]
     if not qa_tasks:
-        logger.error("No QA (question_answering) tasks found in config")
+        logger.error("No qa_scoring tasks found in config")
         sys.exit(1)
 
     logger.info("=" * 60)
-    logger.info("Jenga-AI V2 — QA Call Scoring Training")
+    logger.info("JengaNLP — QA Call Scoring Training")
     logger.info("=" * 60)
     logger.info("Project: %s", config.project_name)
     logger.info("Model: %s", config.model.base_model)

@@ -67,9 +67,13 @@ class Trainer:
         eval_datasets: dict[str, Any],
         callbacks: Optional[list[TrainingCallback]] = None,
         resume_from: str | Path | None = None,
+        run_name: str | None = None,
+        run_tags: dict[str, str] | None = None,
     ) -> None:
         self.config = config
         self.training_config = config.training
+        self.run_name = run_name or config.project_name
+        self.run_tags = {"project_name": config.project_name, "mode": "train", **(run_tags or {})}
 
         # Device setup
         self.device = get_device(self.training_config.device)
@@ -107,8 +111,16 @@ class Trainer:
         """Set up built-in callbacks from config."""
         # Logging callback
         if self.training_config.logging:
+            config_dict = self.config.model_dump(mode="json")
             self.callbacks.append(
-                LoggingCallback(self.training_config.logging, self.training_config.output_dir)
+                LoggingCallback(
+                    self.training_config.logging,
+                    self.training_config.output_dir,
+                    run_name=self.run_name,
+                    params=_tracking_params(self.config),
+                    tags={**self.run_tags, "tasks": ",".join(t.name for t in self.config.tasks)},
+                    config_dict=config_dict,
+                )
             )
 
         # Early stopping callback
@@ -131,6 +143,17 @@ class Trainer:
                     greater_is_better=self.training_config.greater_is_better,
                 )
             )
+
+    def log_final_metrics(
+        self, metrics: dict[str, Any], artifact_files: list[str | Path] | None = None
+    ) -> None:
+        """Send metrics (and result files) from a standalone ``evaluate()`` to the tracker, then close it."""
+        for cb in self.callbacks:
+            if isinstance(cb, LoggingCallback):
+                cb.log_metrics(metrics)
+                for path in artifact_files or []:
+                    cb.log_artifact(path)
+                cb.close()
 
     def _create_dataloaders(self, datasets: dict[str, Any], is_eval: bool) -> dict[str, DataLoader]:
         """Create task-specific dataloaders with proper collators."""
@@ -248,6 +271,17 @@ class Trainer:
             desc="Training",
         )
 
+        # Defined up front so resuming an already-finished run (where the epoch
+        # loop below does not execute) still returns valid final metrics.
+        eval_metrics: dict[str, Any] = {}
+        if self.current_epoch >= self.training_config.num_epochs:
+            logger.info(
+                f"Run already completed {self.training_config.num_epochs} epoch(s); "
+                "nothing left to train. Increase training.num_epochs to continue training."
+            )
+            if self.eval_dataloaders:
+                eval_metrics = self.evaluate()
+
         try:
             for epoch in range(self.current_epoch, self.training_config.num_epochs):
                 self.current_epoch = epoch
@@ -313,23 +347,39 @@ class Trainer:
                     logger.info("Training stopped early")
                     break
 
-        except Exception as exc:
-            for cb in self.callbacks:
-                on_error = getattr(cb, "on_train_error", None)
-                if callable(on_error):
-                    on_error(exc, model=self.model, global_step=self.global_step, epoch=self.current_epoch)
-            raise
-        finally:
+        except BaseException as exc:
             progress.close()
-
-            # End callbacks
+            if isinstance(exc, Exception):
+                for cb in self.callbacks:
+                    on_error = getattr(cb, "on_train_error", None)
+                    if callable(on_error):
+                        on_error(exc, model=self.model, global_step=self.global_step, epoch=self.current_epoch)
+            # Still close loggers/trackers, but there is no finished model to publish.
             for cb in self.callbacks:
                 cb.on_train_end(model=self.model)
+            raise
 
-        # Save final model
-        self.model.save(self.training_config.output_dir)
+        progress.close()
+
+        # Save the final, self-contained model folder *before* end-of-training
+        # callbacks run, so trackers (e.g. MLflow) can upload it.
+        output_dir = Path(self.training_config.output_dir)
+        self.model.save(output_dir)
+        self._save_tokenizer(output_dir)
+        self.config.to_yaml(output_dir / "experiment_config.yaml")
+
+        for cb in self.callbacks:
+            cb.on_train_end(model=self.model, output_dir=str(output_dir))
 
         return {"history": self.training_history, "final_metrics": eval_metrics}
+
+    def _save_tokenizer(self, output_dir: Path) -> None:
+        """Save the tokenizer next to the weights so inference does not need the Hub."""
+        from ..core.model import TOKENIZER_DIRNAME
+
+        save_pretrained = getattr(self.tokenizer, "save_pretrained", None)
+        if callable(save_pretrained):
+            save_pretrained(str(output_dir / TOKENIZER_DIRNAME))
 
     def _training_step(
         self,
@@ -490,3 +540,32 @@ class Trainer:
         """Clean up resources."""
         for cb in self.callbacks:
             cb.on_train_end()
+
+
+def _tracking_params(config: ExperimentConfig) -> dict[str, Any]:
+    """Flatten the hyperparameters worth comparing across runs into tracker params."""
+    t = config.training
+    params: dict[str, Any] = {
+        "base_model": config.model.base_model,
+        "dropout": config.model.dropout,
+        "max_length": config.tokenizer.max_length,
+        "learning_rate": t.learning_rate,
+        "batch_size": t.batch_size,
+        "eval_batch_size": t.eval_batch_size,
+        "num_epochs": t.num_epochs,
+        "weight_decay": t.weight_decay,
+        "warmup_steps": t.warmup_steps,
+        "gradient_accumulation_steps": t.gradient_accumulation_steps,
+        "max_grad_norm": t.max_grad_norm,
+        "use_amp": t.use_amp,
+        "device": t.device,
+        "task_sampling": getattr(t.task_sampling, "value", t.task_sampling),
+        "num_tasks": len(config.tasks),
+    }
+    if t.data is not None:
+        params["test_size"] = t.data.test_size
+        params["seed"] = t.data.seed
+    for task in config.tasks:
+        params[f"task.{task.name}.type"] = getattr(task.type, "value", task.type)
+        params[f"task.{task.name}.heads"] = ",".join(f"{h.name}:{h.num_labels}" for h in task.heads)
+    return params

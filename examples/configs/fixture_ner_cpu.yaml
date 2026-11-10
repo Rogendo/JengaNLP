@@ -12,7 +12,7 @@ tokenizer:
 tasks:
   - name: child_helpline_ner
     type: ner
-    data_path: /home/naynek/jenga_nlp/examples/fixtures/sample_ner.jsonl
+    data_path: ../fixtures/sample_ner.jsonl
     text_column: text
     label_column: entities
     heads:

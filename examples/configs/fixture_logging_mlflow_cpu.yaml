@@ -12,7 +12,7 @@ tokenizer:
 tasks:
   - name: mpesa_sentiment
     type: sentiment
-    data_path: fixtures/sample_sentiment.jsonl
+    data_path: ../fixtures/sample_sentiment.jsonl
     text_column: text
     label_column: label
     heads:
@@ -36,7 +36,7 @@ training:
   logging:
     service: mlflow
     experiment_name: fixture_logging_mlflow_cpu
-    tracking_uri: file:///tmp/jenganlp_mlruns
+    tracking_uri: sqlite:///mlflow.db
     log_every_n_steps: 1
   checkpoint:
     save_every_n_epochs: 1

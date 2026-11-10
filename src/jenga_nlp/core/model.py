@@ -39,12 +39,23 @@ class MultiTaskModel(nn.Module):
         tasks: List of task instances.
     """
 
-    def __init__(self, model_config: ModelConfig, tasks: list[BaseTask]) -> None:
+    def __init__(
+        self,
+        model_config: ModelConfig,
+        tasks: list[BaseTask],
+        encoder_config_dir: str | Path | None = None,
+    ) -> None:
         super().__init__()
 
-        # Load shared encoder
-        self.encoder_config = AutoConfig.from_pretrained(model_config.base_model)
-        self.encoder = AutoModel.from_pretrained(model_config.base_model, config=self.encoder_config)
+        # Load shared encoder. When rebuilding a saved model, build the encoder
+        # from its saved config only: the real weights come from model.pt, so
+        # there is no need to download the pretrained base model again.
+        if encoder_config_dir is not None:
+            self.encoder_config = AutoConfig.from_pretrained(encoder_config_dir)
+            self.encoder = AutoModel.from_config(self.encoder_config)
+        else:
+            self.encoder_config = AutoConfig.from_pretrained(model_config.base_model)
+            self.encoder = AutoModel.from_pretrained(model_config.base_model, config=self.encoder_config)
 
         # Auto-detect hidden size from encoder
         self.hidden_size = self.encoder_config.hidden_size
@@ -221,8 +232,13 @@ class MultiTaskModel(nn.Module):
             for task_config in experiment_config.tasks
         ]
 
-        # Create model
-        model = cls(model_config=experiment_config.model, tasks=tasks)
+        # Create model (offline when the encoder config was saved alongside the weights)
+        encoder_config_dir = load_path / "encoder_config"
+        model = cls(
+            model_config=experiment_config.model,
+            tasks=tasks,
+            encoder_config_dir=encoder_config_dir if encoder_config_dir.is_dir() else None,
+        )
 
         # Load state dict
         state_dict = torch.load(load_path / "model.pt", map_location=device, weights_only=True)
@@ -258,3 +274,18 @@ class MultiTaskModel(nn.Module):
         ]
 
         return cls(model_config=config.model, tasks=tasks)
+
+
+TOKENIZER_DIRNAME = "tokenizer"
+
+
+def load_tokenizer(model_dir: str | Path | None, base_model: str) -> Any:
+    """Load the tokenizer saved with a model, falling back to the base model on the Hub."""
+    from transformers import AutoTokenizer
+
+    if model_dir is not None:
+        saved = Path(model_dir) / TOKENIZER_DIRNAME
+        if saved.is_dir():
+            return AutoTokenizer.from_pretrained(saved)
+        logger.info("No saved tokenizer in %s; loading %s from the Hugging Face Hub", model_dir, base_model)
+    return AutoTokenizer.from_pretrained(base_model)

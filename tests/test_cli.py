@@ -123,3 +123,22 @@ def test_unknown_command_exits_nonzero():
         text=True,
     )
     assert result.returncode != 0
+
+
+# ---------------------------------------------------------------------------
+# backends command output
+# ---------------------------------------------------------------------------
+
+from pathlib import Path  # noqa: E402
+
+from jenga_nlp.cli import main  # noqa: E402
+
+_CONFIGS = Path(__file__).resolve().parent.parent / "examples" / "configs"
+
+
+@pytest.mark.parametrize("command_name", ["backends", "backend"])
+def test_backends_status_reports_logging_and_integrations(capsys, command_name):
+    main([command_name, "status", "--config", str(_CONFIGS / "fixture_mpesa_fraud_cpu.yaml")])
+    out = capsys.readouterr().out
+    assert "training logging: mlflow (sqlite:///mlflow.db)" in out
+    assert "integrations: none configured" in out

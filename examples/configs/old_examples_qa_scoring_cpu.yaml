@@ -12,7 +12,8 @@ tokenizer:
 tasks:
   - name: call_qa_scoring
     type: qa_scoring
-    data_path: /home/naynek/Desktop/Jenga-AI/examples/data/synthetic_qa_metrics_data_v01x.json
+    # Dataset not bundled with JengaNLP: point this at your own copy.
+    data_path: ../data/synthetic_qa_metrics_data_v01x.json
     text_column: text
     label_column: labels
     heads:

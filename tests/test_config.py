@@ -243,3 +243,48 @@ def test_tokenizer_config_defaults():
 def test_tokenizer_config_rejects_zero_max_length():
     with pytest.raises(Exception):
         TokenizerConfig(max_length=0)
+
+
+# ---------------------------------------------------------------------------
+# from_yaml — relative data_path resolution
+# ---------------------------------------------------------------------------
+
+def _write_config(config_dir: Path, data_path: str) -> Path:
+    cfg = {**MINIMAL_CONFIG, "tasks": [{**MINIMAL_TASK, "data_path": data_path}]}
+    path = config_dir / "config.yaml"
+    path.write_text(yaml.safe_dump(cfg))
+    return path
+
+
+def test_from_yaml_resolves_data_path_relative_to_config(tmp_path, monkeypatch):
+    (tmp_path / "configs").mkdir()
+    (tmp_path / "fixtures").mkdir()
+    data = tmp_path / "fixtures" / "train.jsonl"
+    data.write_text('{"text": "x", "label": 0}\n')
+    cfg_path = _write_config(tmp_path / "configs", "../fixtures/train.jsonl")
+
+    elsewhere = tmp_path / "some" / "other" / "dir"
+    elsewhere.mkdir(parents=True)
+    monkeypatch.chdir(elsewhere)
+
+    cfg = ExperimentConfig.from_yaml(cfg_path)
+    assert Path(cfg.tasks[0].data_path) == data.resolve()
+
+
+def test_from_yaml_prefers_cwd_relative_data_path(tmp_path, monkeypatch):
+    (tmp_path / "configs").mkdir()
+    (tmp_path / "configs" / "train.jsonl").write_text("{}\n")
+    (tmp_path / "train.jsonl").write_text("{}\n")
+    cfg_path = _write_config(tmp_path / "configs", "train.jsonl")
+    monkeypatch.chdir(tmp_path)
+
+    cfg = ExperimentConfig.from_yaml(cfg_path)
+    assert cfg.tasks[0].data_path == "train.jsonl"
+
+
+def test_from_yaml_leaves_missing_data_path_unchanged(tmp_path, monkeypatch):
+    cfg_path = _write_config(tmp_path, "missing/train.jsonl")
+    monkeypatch.chdir(tmp_path)
+
+    cfg = ExperimentConfig.from_yaml(cfg_path)
+    assert cfg.tasks[0].data_path == "missing/train.jsonl"

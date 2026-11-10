@@ -37,10 +37,23 @@ class WandBAdapter(BaseAdapter):
 
     def handle_event(self, event: ActivityEvent) -> None:
         wandb = self._load()
-        if event.event_type.value in {"step_logged", "metrics_logged"}:
-            metrics = event.payload.get("metrics", {}) if isinstance(event.payload, dict) else {}
-            wandb.log(metrics, step=event.step or event.epoch or 0)
-        elif event.event_type.value == "checkpoint_saved":
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        kind = event.event_type.value
+        if kind == "step_logged":
+            # Training steps carry the loss directly in the payload.
+            if isinstance(payload.get("loss"), (int, float)):
+                wandb.log({"train/loss": float(payload["loss"])}, step=event.step)
+        elif kind == "metrics_logged" or (event.stage.value == "eval" and "metrics" in payload):
+            # Per-epoch eval metrics (step = global training step, so they line up with
+            # train/loss) and standalone `evaluate` results (no step: W&B uses its current one).
+            metrics = {
+                f"eval/{k}": float(v) for k, v in (payload.get("metrics") or {}).items() if isinstance(v, (int, float))
+            }
+            if metrics and event.step is not None:
+                wandb.log(metrics, step=event.step)
+            elif metrics:
+                wandb.log(metrics)
+        elif kind == "checkpoint_saved":
             path = event.payload.get("artifact_path") if isinstance(event.payload, dict) else None
             if path:
                 wandb.save(str(path))

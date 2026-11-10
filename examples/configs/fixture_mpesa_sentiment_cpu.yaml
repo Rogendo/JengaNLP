@@ -12,7 +12,7 @@ tokenizer:
 tasks:
   - name: mpesa_sentiment
     type: sentiment
-    data_path: fixtures/sample_sentiment.jsonl
+    data_path: ../fixtures/sample_sentiment.jsonl
     text_column: text
     label_column: label
     heads:

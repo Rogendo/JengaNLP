@@ -2,8 +2,8 @@
 """Run a multi-task experiment from a YAML config file.
 
 Usage:
-    python examples/run_experiment.py --config configs/multi_task_classification.yaml
-    python examples/run_experiment.py --config configs/qa_scoring.yaml --output-dir ./my_results
+    python examples/run_experiment.py --config examples/configs/multi_task_classification.yaml
+    python examples/run_experiment.py --config examples/configs/fixture_qa_scoring_cpu.yaml --output-dir ./my_results
 """
 
 from __future__ import annotations
@@ -13,12 +13,12 @@ import logging
 import sys
 from pathlib import Path
 
-# Add project root to path for standalone execution
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# Allow running from a source checkout without `pip install -e .`
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run Jenga-AI multi-task experiment")
+    parser = argparse.ArgumentParser(description="Run JengaNLP multi-task experiment")
     parser.add_argument("--config", required=True, help="Path to YAML config")
     parser.add_argument("--output-dir", default=None, help="Override output directory")
     parser.add_argument("--device", default=None, help="Override device (auto/cuda/cpu/mps)")
@@ -34,10 +34,12 @@ def main() -> None:
 
     from transformers import AutoTokenizer
 
-    from jenga_ai.core.config import ExperimentConfig, TaskType
-    from jenga_ai.core.model import MultiTaskModel
-    from jenga_ai.data.processor import DataProcessor
-    from jenga_ai.training.trainer import Trainer
+    from jenga_nlp.core.config import ExperimentConfig, TaskType
+    from jenga_nlp.core.model import MultiTaskModel
+    from jenga_nlp.data.processor import DataProcessor
+    from jenga_nlp.training.trainer import Trainer
+
+    QA_TYPES = {TaskType.QA_SCORING, TaskType.QUESTION_ANSWERING}
 
     # Load config
     config_path = Path(args.config)
@@ -56,7 +58,7 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info("=" * 60)
-    logger.info("Jenga-AI V2 — Multi-Task Experiment")
+    logger.info("JengaNLP — Multi-Task Experiment")
     logger.info("=" * 60)
     logger.info("Project: %s", config.project_name)
     logger.info("Tasks: %s", [t.name for t in config.tasks])
@@ -95,8 +97,8 @@ def main() -> None:
 
     # Print QA report if applicable
     for task_config in config.tasks:
-        if task_config.type == TaskType.QA:
-            from jenga_ai.tasks.qa import QAScoringTask
+        if task_config.type in QA_TYPES:
+            from jenga_nlp.tasks.qa import QAScoringTask
 
             report = QAScoringTask.format_evaluation_report(
                 results.get("final_metrics", {}),

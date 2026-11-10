@@ -73,7 +73,7 @@ integrations:
   - type: mlflow
     enabled: true
     params:
-      tracking_uri: file:./mlruns
+      tracking_uri: sqlite:///mlflow.db
       experiment_name: whisper-somali-training
   - type: tensorboard
     enabled: true

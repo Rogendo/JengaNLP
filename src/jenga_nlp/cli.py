@@ -27,11 +27,11 @@ Usage:
   python -m jenga_nlp <command> [options]
 
 Common commands:
-  python -m jenga_nlp train --config configs/fixture_mpesa_fraud_cpu.yaml --device cpu
-  python -m jenga_nlp evaluate --config configs/fixture_mpesa_fraud_cpu.yaml --model-dir /tmp/jenganlp_fixture_mpesa_fraud_cpu --device cpu
-  python -m jenga_nlp predict --config configs/fixture_mpesa_fraud_cpu.yaml --model-dir /tmp/jenganlp_fixture_mpesa_fraud_cpu --text "Your text here"
-  python -m jenga_nlp resume --config configs/fixture_mpesa_fraud_cpu.yaml --run-dir /tmp/jenganlp_fixture_mpesa_fraud_cpu
-  python -m jenga_nlp backends status --config configs/fixture_mpesa_fraud_cpu.yaml
+  python -m jenga_nlp train --config examples/configs/fixture_mpesa_fraud_cpu.yaml --device cpu
+  python -m jenga_nlp evaluate --config examples/configs/fixture_mpesa_fraud_cpu.yaml --model-dir /tmp/jenganlp_fixture_mpesa_fraud_cpu --device cpu
+  python -m jenga_nlp predict --config examples/configs/fixture_mpesa_fraud_cpu.yaml --model-dir /tmp/jenganlp_fixture_mpesa_fraud_cpu --text "Your text here"
+  python -m jenga_nlp resume --config examples/configs/fixture_mpesa_fraud_cpu.yaml --run-dir /tmp/jenganlp_fixture_mpesa_fraud_cpu
+  python -m jenga_nlp backends status --config examples/configs/fixture_mpesa_fraud_cpu.yaml
   python -m jenga_nlp asr serve --model-name openai/whisper-small --audio sample.wav
 
 Commands:
@@ -114,9 +114,9 @@ def run_evaluate(config: ExperimentConfig, model_dir: str | Path, device: str | 
         config=config.model_dump(mode="python"),
         tags={"project_name": config.project_name, "mode": "eval"},
     )
-    from transformers import AutoTokenizer
+    from .core.model import load_tokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained(config.model.base_model)
+    tokenizer = load_tokenizer(model_dir, config.model.base_model)
     _, eval_datasets, _ = DataProcessor(config, tokenizer).process()
     runtime.emit_info("evaluation datasets processed", payload={"eval_tasks": list(eval_datasets.keys())})
     model = MultiTaskModel.load(model_dir, config, device=config.training.resolve_device())
@@ -127,11 +127,47 @@ def run_evaluate(config: ExperimentConfig, model_dir: str | Path, device: str | 
         train_datasets={},
         eval_datasets=eval_datasets,
         callbacks=[ActivityEventCallback(runtime=runtime)],
+        run_name=f"{config.project_name}-eval",
+        run_tags={"mode": "eval", "model_dir": str(model_dir)},
     )
     result = trainer.evaluate()
+    results_path = _write_eval_results(config, model_dir, result, eval_datasets)
+    trainer.log_final_metrics(result, artifact_files=[results_path])
     runtime.emit_info("evaluation complete", stage=ActivityEventStage.EVAL, payload={"metrics": result})
     runtime.finish(status="success")
     return result
+
+
+def _write_eval_results(
+    config: ExperimentConfig, model_dir: str | Path, metrics: dict[str, Any], eval_datasets: dict[str, Any]
+) -> Path:
+    """Persist evaluation results next to the model so they can be kept and compared."""
+    import json
+    from datetime import datetime, timezone
+
+    from .__version__ import __version__
+
+    path = Path(model_dir) / "eval_results.json"
+    payload = {
+        "evaluated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "jenga_nlp_version": __version__,
+        "project_name": config.project_name,
+        "model_dir": str(Path(model_dir).resolve()),
+        "base_model": config.model.base_model,
+        "tasks": {
+            t.name: {
+                "type": getattr(t.type, "value", t.type),
+                "data_path": t.data_path,
+                "eval_samples": len(eval_datasets[t.name]) if t.name in eval_datasets else 0,
+            }
+            for t in config.tasks
+        },
+        "split": {"test_size": config.training.data.test_size, "seed": config.training.data.seed},
+        "metrics": {k: float(v) for k, v in metrics.items() if isinstance(v, (int, float))},
+    }
+    path.write_text(json.dumps(payload, indent=2))
+    logger.info("Evaluation results written to %s", path)
+    return path
 
 
 def run_predict(
@@ -155,6 +191,15 @@ def run_predict(
 
 
 def run_backends(config: ExperimentConfig, command: str) -> None:
+    logging_cfg = config.training.logging
+    service = getattr(logging_cfg.service, "value", logging_cfg.service)
+    if service and service != "none":
+        target = f" ({logging_cfg.tracking_uri})" if getattr(logging_cfg, "tracking_uri", None) else ""
+        print(f"training logging: {service}{target}")
+    else:
+        print("training logging: none")
+    if not config.integrations:
+        print("integrations: none configured (add an `integrations:` section to the config to enable adapters)")
     for integration in config.integrations:
         adapter = build_adapter(integration, base_dir=config.training.output_dir)
         if adapter is None:
@@ -246,7 +291,7 @@ def build_parser() -> argparse.ArgumentParser:
     asr_train.add_argument("--push-to-hub", action="store_true")
     asr_train.add_argument("--hub-model-id")
 
-    backends = sub.add_parser("backends", help="Manage configured integration backends.")
+    backends = sub.add_parser("backends", aliases=["backend"], help="Manage configured integration backends.")
     backend_sub = backends.add_subparsers(dest="backend_command", required=True, parser_class=JengaArgumentParser)
 
     backend_start = backend_sub.add_parser("start", help="Initialize configured backends.")
@@ -311,6 +356,6 @@ def main(argv: list[str] | None = None) -> None:
                     hub_model_id=args.hub_model_id,
                 )
             )
-    elif args.command == "backends":
+    elif args.command in ("backends", "backend"):
         config = ExperimentConfig.from_yaml(args.config)
         run_backends(config, args.backend_command)

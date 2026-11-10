@@ -14,10 +14,9 @@ from pathlib import Path
 from typing import Any, Optional
 
 import torch
-from transformers import AutoTokenizer
 
 from ..core.config import ExperimentConfig, TaskConfig, TaskType
-from ..core.model import MultiTaskModel
+from ..core.model import MultiTaskModel, load_tokenizer
 from ..utils.device import get_device, move_to_device
 from .formatters import format_result
 
@@ -191,7 +190,7 @@ class InferencePipeline:
         resolved_device = get_device(device)
 
         # Load tokenizer
-        tokenizer = AutoTokenizer.from_pretrained(config.model.base_model)
+        tokenizer = load_tokenizer(model_dir, config.model.base_model)
 
         # Load model
         model = MultiTaskModel.load(model_dir, config, device=str(resolved_device))

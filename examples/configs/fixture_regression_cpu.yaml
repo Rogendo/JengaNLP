@@ -12,7 +12,7 @@ tokenizer:
 tasks:
   - name: text_risk_regression
     type: regression
-    data_path: /home/naynek/jenga_nlp/examples/fixtures/sample_regression.jsonl
+    data_path: ../fixtures/sample_regression.jsonl
     text_column: text
     label_column: risk_score
     heads:

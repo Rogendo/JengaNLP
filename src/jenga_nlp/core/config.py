@@ -187,6 +187,14 @@ class LoggingConfig(BaseModel):
         gt=0,
         description="Frequency of logging in training steps",
     )
+    log_model: bool = Field(
+        default=True,
+        description="MLflow only: upload the final model folder (weights, tokenizer, config) as artifacts",
+    )
+    log_checkpoints: bool = Field(
+        default=False,
+        description="MLflow only: also upload checkpoints/ (large: includes optimizer state for resume)",
+    )
 
 
 class CheckpointConfig(BaseModel):
@@ -396,8 +404,36 @@ class ExperimentConfig(BaseModel):
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "ExperimentConfig":
-        """Load configuration from a YAML file."""
-        return cls(**yaml.safe_load(Path(path).read_text()))
+        """Load configuration from a YAML file.
+
+        A relative task ``data_path`` is resolved against the current working
+        directory first (unchanged behaviour). If no file exists there, it is
+        resolved against the directory containing the YAML file, so bundled
+        example configs work regardless of where the command is run from.
+        """
+        path = Path(path)
+        data = yaml.safe_load(path.read_text()) or {}
+        _resolve_task_data_paths(data, path.resolve().parent)
+        return cls(**data)
+
+
+def _resolve_task_data_paths(data: dict[str, Any], config_dir: Path) -> None:
+    """Rewrite relative task data paths that only exist relative to the config file."""
+    tasks = data.get("tasks")
+    if not isinstance(tasks, list):
+        return
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        raw = task.get("data_path")
+        if not isinstance(raw, str) or not raw:
+            continue
+        candidate = Path(raw).expanduser()
+        if candidate.is_absolute() or candidate.exists():
+            continue
+        relative_to_config = config_dir / candidate
+        if relative_to_config.exists():
+            task["data_path"] = str(relative_to_config.resolve())
 
 
 def _convert_enums(d: dict[str, Any]) -> None:

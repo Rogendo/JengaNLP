@@ -12,7 +12,7 @@ tokenizer:
 tasks:
   - name: mpesa_risk_tags
     type: multi_label_classification
-    data_path: /home/naynek/jenga_nlp/examples/fixtures/sample_multilabel.jsonl
+    data_path: ../fixtures/sample_multilabel.jsonl
     text_column: text
     label_column: labels
     heads:

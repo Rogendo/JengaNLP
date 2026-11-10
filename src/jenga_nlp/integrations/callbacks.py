@@ -58,6 +58,7 @@ class ActivityEventCallback:
                 level=ActivityEventLevel.INFO,
                 message=f"epoch {epoch + 1} metrics logged",
                 epoch=epoch,
+                step=kwargs.get("global_step"),
                 payload={"metrics": metrics, "keys": list(kwargs.keys())},
             )
         )

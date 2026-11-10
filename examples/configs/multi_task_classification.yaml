@@ -1,9 +1,9 @@
-# Jenga-AI V2 — Multi-Task Classification Experiment
+# JengaNLP — Multi-Task Classification Experiment
 # M-PESA fraud detection (single-label binary classification)
 #
 # Usage:
-#   python -m jenga_ai train --config configs/multi_task_classification.yaml
-#   python examples/run_experiment.py --config configs/multi_task_classification.yaml
+#   jenga-nlp train --config examples/configs/multi_task_classification.yaml
+#   python examples/run_experiment.py --config examples/configs/multi_task_classification.yaml
 
 project_name: mpesa_fraud_detection
 
@@ -48,7 +48,7 @@ training:
 tasks:
   - name: fraud_detection
     type: single_label_classification
-    data_path:  fixtures/sample_classification.jsonl
+    data_path: ../fixtures/sample_classification.jsonl
     text_column: text
     label_column: label
     heads:
