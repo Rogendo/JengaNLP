@@ -152,7 +152,7 @@ class MultiTaskModel(nn.Module):
 
         # Apply fusion if available
         if self.fusion is not None:
-            sequence_output = self.fusion(sequence_output, task_id)
+            sequence_output = self.fusion(sequence_output, task_id, attention_mask=attention_mask)
 
         # Pool: use CLS token
         pooled_output = sequence_output[:, 0]  # [batch, hidden]
@@ -242,6 +242,12 @@ class MultiTaskModel(nn.Module):
 
         # Load state dict
         state_dict = torch.load(load_path / "model.pt", map_location=device, weights_only=True)
+        if "fusion.attention.0.weight" in state_dict:
+            raise ValueError(
+                f"{load_path} was trained with the pre-2.0 attention fusion, which had no task-specific "
+                "effect and has been replaced. Retrain this model with jenga-nlp >= 2.0.0 "
+                "(or set model.fusion.type: none to train without fusion)."
+            )
         model.load_state_dict(state_dict)
         model.to(device)
 

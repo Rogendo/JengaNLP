@@ -224,11 +224,21 @@ class Trainer:
 
     def _create_optimizer_and_scheduler(self, num_training_steps: int) -> tuple[AdamW, Any]:
         """Create optimizer and learning rate scheduler."""
-        optimizer = AdamW(
-            self.model.parameters(),
-            lr=self.training_config.learning_rate,
-            weight_decay=self.training_config.weight_decay,
-        )
+        lr = self.training_config.learning_rate
+        fusion = getattr(self.model, "fusion", None)
+        fusion_cfg = self.config.model.fusion
+        fusion_params = list(fusion.parameters()) if fusion is not None else []
+        if fusion_params and fusion_cfg is not None and fusion_cfg.lr_multiplier != 1.0:
+            # Fusion layers start from scratch, so they may need a higher learning
+            # rate than the pretrained encoder to learn within a fine-tuning run.
+            fusion_ids = {id(p) for p in fusion_params}
+            param_groups: Any = [
+                {"params": [p for p in self.model.parameters() if id(p) not in fusion_ids], "lr": lr},
+                {"params": fusion_params, "lr": lr * fusion_cfg.lr_multiplier},
+            ]
+        else:
+            param_groups = self.model.parameters()
+        optimizer = AdamW(param_groups, lr=lr, weight_decay=self.training_config.weight_decay)
         scheduler = get_linear_schedule_with_warmup(
             optimizer,
             num_warmup_steps=self.training_config.warmup_steps,
@@ -249,7 +259,10 @@ class Trainer:
         optimizer, scheduler = self._create_optimizer_and_scheduler(effective_steps)
         if self._resume_state is not None:
             if self._resume_state.get("optimizer_state_dict") is not None:
-                optimizer.load_state_dict(self._resume_state["optimizer_state_dict"])
+                try:
+                    optimizer.load_state_dict(self._resume_state["optimizer_state_dict"])
+                except ValueError as exc:  # e.g. parameter groups changed (fusion lr_multiplier)
+                    logger.warning(f"Could not restore optimizer state ({exc}); continuing with a fresh optimizer")
             if self._resume_state.get("scheduler_state_dict") is not None:
                 scheduler.load_state_dict(self._resume_state["scheduler_state_dict"])
             if self._resume_state.get("scaler_state_dict") is not None and self.scaler is not None:
@@ -290,31 +303,28 @@ class Trainer:
                 for cb in self.callbacks:
                     cb.on_epoch_begin(epoch=epoch)
 
-                # Create iterators for round-robin
                 iterators = {name: iter(dl) for name, dl in self.train_dataloaders.items()}
                 epoch_losses: list[float] = []
 
-                while iterators:
-                    task_names = list(iterators.keys())
+                for task_name in self._build_task_schedule(epoch):
+                    try:
+                        batch = next(iterators[task_name])
+                    except StopIteration:
+                        # Sampled schedules can revisit a small task: start a fresh pass over it.
+                        iterators[task_name] = iter(self.train_dataloaders[task_name])
+                        batch = next(iterators[task_name])
 
-                    for task_name in task_names:
-                        try:
-                            batch = next(iterators[task_name])
-                        except StopIteration:
-                            del iterators[task_name]
-                            continue
+                    loss = self._training_step(batch, task_name, optimizer, scheduler)
 
-                        loss = self._training_step(batch, task_name, optimizer, scheduler)
+                    epoch_losses.append(loss)
+                    self.global_step += 1
 
-                        epoch_losses.append(loss)
-                        self.global_step += 1
+                    # Callbacks
+                    for cb in self.callbacks:
+                        cb.on_step(step=self.global_step, loss=loss)
 
-                        # Callbacks
-                        for cb in self.callbacks:
-                            cb.on_step(step=self.global_step, loss=loss)
-
-                        progress.update(1)
-                        progress.set_postfix(loss=f"{loss:.4f}", epoch=epoch + 1)
+                    progress.update(1)
+                    progress.set_postfix(loss=f"{loss:.4f}", epoch=epoch + 1)
 
                 # Evaluate
                 eval_metrics = {}
@@ -372,6 +382,47 @@ class Trainer:
             cb.on_train_end(model=self.model, output_dir=str(output_dir))
 
         return {"history": self.training_history, "final_metrics": eval_metrics}
+
+    def _build_task_schedule(self, epoch: int) -> list[str]:
+        """Return the order in which tasks are trained during one epoch.
+
+        The schedule always has ``sum(len(dataloader))`` steps, so the learning-rate
+        schedule is the same for every strategy.
+
+        - ``round_robin``: one batch per task in turn until each task is exhausted.
+        - ``proportional``: each step picks a task with probability proportional to
+          its number of training examples.
+        - ``temperature``: probability proportional to ``size ** (1 / temperature)``;
+          ``temperature > 1`` flattens the distribution, upsampling small tasks.
+
+        Sampled schedules are reproducible: the generator is seeded from
+        ``training.data.seed`` and the epoch.
+        """
+        loaders = self.train_dataloaders
+        names = list(loaders.keys())
+        batches = {name: len(dl) for name, dl in loaders.items()}
+        total_steps = sum(batches.values())
+        strategy = self.training_config.task_sampling
+
+        if strategy == TaskSamplingStrategy.ROUND_ROBIN or len(names) <= 1:
+            schedule: list[str] = []
+            remaining = dict(batches)
+            while any(remaining.values()):
+                for name in names:
+                    if remaining[name]:
+                        schedule.append(name)
+                        remaining[name] -= 1
+            return schedule
+
+        sizes = torch.tensor([float(len(loaders[n].dataset)) for n in names])
+        exponent = 1.0 if strategy == TaskSamplingStrategy.PROPORTIONAL else 1.0 / self.training_config.temperature
+        probs = sizes.pow(exponent)
+        probs = probs / probs.sum()
+
+        seed = self.training_config.data.seed if self.training_config.data is not None else 0
+        generator = torch.Generator().manual_seed(int(seed) * 1000 + epoch)
+        picks = torch.multinomial(probs, total_steps, replacement=True, generator=generator)
+        return [names[i] for i in picks.tolist()]
 
     def _save_tokenizer(self, output_dir: Path) -> None:
         """Save the tokenizer next to the weights so inference does not need the Hub."""
@@ -562,6 +613,12 @@ def _tracking_params(config: ExperimentConfig) -> dict[str, Any]:
         "task_sampling": getattr(t.task_sampling, "value", t.task_sampling),
         "num_tasks": len(config.tasks),
     }
+    fusion = config.model.fusion
+    params["fusion"] = getattr(fusion.type, "value", fusion.type) if fusion is not None else "none"
+    if fusion is not None and params["fusion"] != "none":
+        params["fusion.lr_multiplier"] = fusion.lr_multiplier
+        params["fusion.num_attention_heads"] = fusion.num_attention_heads
+        params["fusion.gate_init_value"] = fusion.gate_init_value
     if t.data is not None:
         params["test_size"] = t.data.test_size
         params["seed"] = t.data.seed

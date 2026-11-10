@@ -288,3 +288,25 @@ def test_from_yaml_leaves_missing_data_path_unchanged(tmp_path, monkeypatch):
 
     cfg = ExperimentConfig.from_yaml(cfg_path)
     assert cfg.tasks[0].data_path == "missing/train.jsonl"
+
+
+# ---------------------------------------------------------------------------
+# Legacy "question_answering" alias formats like qa_scoring
+# ---------------------------------------------------------------------------
+
+def test_question_answering_alias_uses_qa_formatter():
+    import torch
+
+    from jenga_nlp.inference.formatters import format_result
+
+    def task(type_):
+        return TaskConfig(
+            name="qa", type=type_, data_path="x.jsonl",
+            heads=[HeadConfig(name="opening", num_labels=1), HeadConfig(name="hold", num_labels=2)],
+        )
+
+    logits = {"opening": torch.tensor([[2.0]]), "hold": torch.tensor([[-1.0, 3.0]])}
+    alias = format_result(task("question_answering"), logits, sample_idx=0)
+    canonical = format_result(task("qa_scoring"), logits, sample_idx=0)
+    assert alias == canonical
+    assert alias["hold"]["prediction"] != [-1.0, 3.0], "raw logits leaked through"

@@ -131,6 +131,14 @@ class FusionConfig(BaseModel):
         le=1.0,
         description="Initial value for the fusion gating mechanism",
     )
+    lr_multiplier: float = Field(
+        default=10.0,
+        gt=0.0,
+        description=(
+            "Fusion parameters train at learning_rate * lr_multiplier. Fusion starts from scratch while the "
+            "encoder is pretrained, so at the encoder's fine-tuning rate it barely learns; try 10-50."
+        ),
+    )
 
 
 class ModelConfig(BaseModel):

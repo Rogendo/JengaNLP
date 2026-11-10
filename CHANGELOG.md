@@ -27,6 +27,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - PyPI packaging with `jenga-nlp` CLI entry point
 
 ### Changed
+- Attention fusion redesigned: each task's embedding now attends over the tokens (padding masked,
+  `num_attention_heads` honoured) and the task context is gated into every token. The previous
+  version had no task-specific effect; models trained with it must be retrained.
+- New `model.fusion.lr_multiplier` (default 10): fusion trains faster than the pretrained encoder
+- `training.task_sampling` now implements `proportional` and `temperature` (previously always round-robin)
 - Refactored from monolithic codebase into modular sub-packages
 - Config parsing migrated to Pydantic v2
 

@@ -1,6 +1,6 @@
 """Fusion mechanisms for multi-task learning.
 This module implements different strategies for fusing shared encoder outputs with task-specific information. The main classes are:
-- AttentionFusion: Uses an attention mechanism to combine shared and task-specific representations.
+- AttentionFusion: Task embedding queries the tokens (masked attention); the task context is gated in.
 - ConcatenationFusion: Concatenates shared output with task embedding and projects back to hidden size.
 - NoFusion: A simple passthrough that returns the shared output unchanged.
 The create_fusion function serves as a factory to instantiate the desired fusion mechanism based on configuration.
@@ -9,11 +9,9 @@ The create_fusion function serves as a factory to instantiate the desired fusion
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from .config import FusionConfig, FusionType
 
@@ -21,85 +19,90 @@ logger = logging.getLogger(__name__)
 
 
 class AttentionFusion(nn.Module):
-    """Attention-based fusion mechanism for task-specific representations.
+    """Task-query attention fusion.
 
-    Fuses the shared encoder output with a learned task embedding using
-    an attention mechanism. Includes residual connection and gating.
+    Each task owns a learned embedding that acts as an attention *query* over
+    the encoder's token representations (padding is masked out). The resulting
+    task-specific context vector is projected and added to every token through
+    a learnable gate, then layer-normalised::
+
+        ctx_t = MultiHeadAttention(query=e_t, keys=values=tokens, mask=padding)
+        out   = LayerNorm(tokens + sigmoid(gate) * W(ctx_t))
+
+    Because the task contribution is an additive, input-dependent vector, it is
+    not cancelled by the LayerNorm, so pooled (CLS) and token features differ
+    per task. ``W`` is zero-initialised, so the module starts as
+    ``LayerNorm(tokens)`` and learns how much task conditioning to add.
 
     Args:
         hidden_size: Hidden dimension of the encoder.
         num_tasks: Number of tasks.
-        config: Fusion configuration.
+        config: Fusion configuration (``num_attention_heads`` must divide ``hidden_size``).
     """
 
-    def __init__(self, hidden_size: int, num_tasks: int, config: Optional[FusionConfig] = None) -> None:
+    def __init__(self, hidden_size: int, num_tasks: int, config: FusionConfig | None = None) -> None:
         super().__init__()
         self.hidden_size = hidden_size
         self.num_tasks = num_tasks
         self.config = config or FusionConfig()
 
-        # Task embeddings - cached, no tensor creation each forward pass
+        num_heads = self.config.num_attention_heads
+        if hidden_size % num_heads != 0:
+            raise ValueError(
+                f"fusion.num_attention_heads={num_heads} must divide the encoder hidden size {hidden_size}"
+            )
+
         self.task_embeddings = nn.Embedding(num_tasks, hidden_size)
+        nn.init.normal_(self.task_embeddings.weight, std=0.02)
 
-        # Attention layer
-        self.attention = nn.Sequential(
-            nn.Linear(hidden_size * 2, hidden_size),
-            nn.Tanh(),
-            nn.Linear(hidden_size, 1),
+        self.attention = nn.MultiheadAttention(
+            hidden_size, num_heads, dropout=self.config.dropout, batch_first=True
         )
+        self.context_proj = nn.Linear(hidden_size, hidden_size)
+        nn.init.zeros_(self.context_proj.weight)
+        nn.init.zeros_(self.context_proj.bias)
 
-        # Dropout for regularization
         self.dropout = nn.Dropout(self.config.dropout)
 
-        # Learnable gate for balancing shared vs task-specific
+        # Store the gate as a logit so sigmoid(gate) starts exactly at gate_init_value.
         if self.config.use_residual:
-            gate_value = self.config.gate_init_value
-            self.gate = nn.Parameter(torch.tensor(gate_value))
+            init = min(max(self.config.gate_init_value, 1e-4), 1 - 1e-4)
+            self.gate = nn.Parameter(torch.logit(torch.tensor(init)))
 
-        # Layer norm for stable training
         self.layer_norm = nn.LayerNorm(hidden_size)
+        self.last_attention_weights: torch.Tensor | None = None
 
-    def forward(self, shared_output: torch.Tensor, task_id: int) -> torch.Tensor:
-        """Fuse shared representation with task-specific embedding.
+    def forward(
+        self,
+        shared_output: torch.Tensor,
+        task_id: int,
+        attention_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Fuse shared token representations with task-specific attention context.
 
         Args:
-            shared_output: [batch_size, seq_len, hidden_size] from encoder.
+            shared_output: [batch_size, seq_len, hidden_size] from the encoder.
             task_id: Integer ID of the current task.
+            attention_mask: Optional [batch_size, seq_len], 1 for real tokens, 0 for padding.
 
         Returns:
-            [batch_size, seq_len, hidden_size] fused representation.
+            [batch_size, seq_len, hidden_size] task-conditioned representation.
         """
-        batch_size, seq_len, _ = shared_output.shape
-
-        # Get task embedding - use LongTensor on the correct device
+        batch_size = shared_output.shape[0]
         task_idx = torch.tensor([task_id], dtype=torch.long, device=shared_output.device)
-        task_emb = self.task_embeddings(task_idx)  # [1, hidden_size]
+        query = self.task_embeddings(task_idx).unsqueeze(0).expand(batch_size, 1, -1)  # [B, 1, H]
 
-        # Expand to match sequence: [batch_size, seq_len, hidden_size]
-        task_emb_expanded = task_emb.unsqueeze(1).expand(batch_size, seq_len, -1)
+        key_padding_mask = attention_mask == 0 if attention_mask is not None else None
+        context, weights = self.attention(
+            query, shared_output, shared_output, key_padding_mask=key_padding_mask, need_weights=True
+        )  # context: [B, 1, H], weights: [B, 1, seq_len]
+        self.last_attention_weights = weights.detach()
 
-        # Concatenate shared + task embedding: [batch_size, seq_len, hidden_size * 2]
-        combined = torch.cat([shared_output, task_emb_expanded], dim=-1)
-
-        # Compute attention weights: [batch_size, seq_len, 1]
-        attn_scores = self.attention(combined)
-        attn_weights = F.softmax(attn_scores, dim=1)
-
-        # Apply attention: [batch_size, seq_len, hidden_size]
-        attended = shared_output * attn_weights
-        attended = self.dropout(attended)
-
-        # Residual connection with learnable gate
+        task_vector = self.dropout(self.context_proj(context))  # [B, 1, H], broadcast over tokens
         if self.config.use_residual:
-            gate = torch.sigmoid(self.gate)
-            output = gate * attended + (1 - gate) * shared_output
-        else:
-            output = attended
+            task_vector = torch.sigmoid(self.gate) * task_vector
 
-        # Layer normalization
-        output = self.layer_norm(output)
-
-        return output
+        return self.layer_norm(shared_output + task_vector)
 
 
 class ConcatenationFusion(nn.Module):
@@ -114,7 +117,7 @@ class ConcatenationFusion(nn.Module):
         config: Fusion configuration.
     """
 
-    def __init__(self, hidden_size: int, num_tasks: int, config: Optional[FusionConfig] = None) -> None:
+    def __init__(self, hidden_size: int, num_tasks: int, config: FusionConfig | None = None) -> None:
         super().__init__()
         self.hidden_size = hidden_size
         self.config = config or FusionConfig()
@@ -124,7 +127,9 @@ class ConcatenationFusion(nn.Module):
         self.dropout = nn.Dropout(self.config.dropout)
         self.layer_norm = nn.LayerNorm(hidden_size)
 
-    def forward(self, shared_output: torch.Tensor, task_id: int) -> torch.Tensor:
+    def forward(
+        self, shared_output: torch.Tensor, task_id: int, attention_mask: torch.Tensor | None = None
+    ) -> torch.Tensor:
         batch_size, seq_len, _ = shared_output.shape
 
         task_idx = torch.tensor([task_id], dtype=torch.long, device=shared_output.device)
@@ -148,7 +153,9 @@ class NoFusion(nn.Module):
     Simply returns the shared output unchanged. Useful as a baseline.
     """
 
-    def forward(self, shared_output: torch.Tensor, task_id: int) -> torch.Tensor:
+    def forward(
+        self, shared_output: torch.Tensor, task_id: int, attention_mask: torch.Tensor | None = None
+    ) -> torch.Tensor:
         return shared_output
 
 
@@ -156,7 +163,7 @@ def create_fusion(
     fusion_type: FusionType,
     hidden_size: int,
     num_tasks: int,
-    config: Optional[FusionConfig] = None,
+    config: FusionConfig | None = None,
 ) -> nn.Module:
     """Factory function to create the appropriate fusion mechanism.
 

@@ -590,6 +590,27 @@ Use a real model for actual quality:
 base_model: distilbert-base-uncased
 ```
 
+#### `fusion` (multi-task models)
+
+Fusion lets each task see a task-specific view of the shared encoder output:
+
+```yaml
+model:
+  fusion:
+    type: attention          # none | attention | concatenation
+    num_attention_heads: 1   # must divide the encoder hidden size
+    dropout: 0.1
+    use_residual: true
+    gate_init_value: 0.5
+    lr_multiplier: 10        # fusion learning rate = training.learning_rate * lr_multiplier
+```
+
+With `type: attention`, each task has a learned embedding that attends over the input tokens (padding is masked out). The resulting task-specific context vector is added to every token through a gate, then layer-normalised. Task heads therefore receive different features for the same text.
+
+Fusion layers start from scratch while the encoder is pretrained. At a typical fine-tuning learning rate (e.g. `2e-5`) they barely learn in a short run, which is why `lr_multiplier` defaults to `10`. In a small 4-task test (fraud, sentiment, QA scoring, NER on DistilBERT), eval loss went from 2.08 without fusion to 1.93 at `10` and 1.70 at `50`, but that was one seed on very little data: try `10`-`50` on your own data and compare runs in MLflow (the run parameters include `fusion` and `fusion.lr_multiplier`).
+
+Models trained with the attention fusion of earlier pre-releases cannot be loaded; retrain them. That older fusion had no task-specific effect.
+
 ### `tokenizer`
 
 ```yaml
@@ -714,7 +735,7 @@ Important fields:
 | `batch_size` | Higher is faster but needs more memory. |
 | `gradient_accumulation_steps` | Simulates larger batches on small GPUs/CPU. |
 | `device` | `auto`, `cpu`, `cuda`, or `mps`. |
-| `task_sampling` | How multi-task batches are scheduled. |
+| `task_sampling` | How multi-task batches are scheduled: `round_robin` (one batch per task in turn), `proportional` (tasks picked in proportion to dataset size), or `temperature` (size^(1/`temperature`); values above 1 upsample small tasks). Sampled schedules are reproducible from `data.seed`. |
 | `metric_for_best_model` | Which metric checkpointing and early stopping watch. |
 
 Task sampling:
