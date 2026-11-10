@@ -34,7 +34,7 @@ class CorpusSource(ConfigModel):
     repeat: int = Field(default=1, ge=1, description="How many times training examples are repeated")
     sensitive: bool = Field(
         default=False,
-        description="Real data about people (chats, case notes). Requires PII + names redaction and repeat <= 2",
+        description="Real data about people (chats, case notes). Requires NER redaction, a recall check, repeat <= 2",
     )
     max_examples: int | None = Field(default=None, gt=0, description="Cap on examples read from this source")
 
@@ -46,19 +46,39 @@ class CorpusSource(ConfigModel):
 
 
 class MLMPrivacyConfig(ConfigModel):
-    """PII redaction applied to every corpus source before training."""
+    """PII redaction applied to the corpus before training.
 
-    redact: bool = Field(default=True, description="Redact phones, IDs, KRA PINs, M-PESA IDs, emails, URLs, ...")
-    names_file: Path | None = Field(
-        default=None,
-        description="Names to redact as [NAME], one per line (required when any source is sensitive)",
+    Regex redaction (phones, IDs, KRA PINs, M-PESA IDs, emails, URLs, ...) runs on
+    every source. An NER model finds names and places; by default it runs on
+    sensitive sources only. Sensitive sources also require a labelled sample on
+    which the whole redaction stack must reach ``min_recall`` before training.
+    """
+
+    redact: bool = Field(default=True, description="Regex PII redaction on every source")
+    detect_types: list[str] | None = Field(
+        default=None, description="Built-in PII types to detect (default: all), e.g. ['phone_ke', 'email']"
     )
     extra_patterns: dict[str, str] = Field(
         default_factory=dict, description="Extra regexes to redact, as {TAG: regex}; replaced with [TAG]"
     )
-    detect_types: list[str] | None = Field(
-        default=None, description="Built-in PII types to detect (default: all), e.g. ['phone_ke', 'email']"
+    ner_model: str | None = Field(
+        default=None,
+        description="JengaNLP NER model folder or Hugging Face token-classification model "
+        "(e.g. masakhane/afroxlmr-large-ner-masakhaner-1.0_2.0)",
     )
+    ner_task: str | None = Field(default=None, description="NER task name, for multi-task JengaNLP models")
+    ner_labels: dict[str, str] | None = Field(
+        default=None,
+        description="NER label -> redaction tag, e.g. {PER: NAME, VICTIM: NAME, LOC: LOCATION} (default: built-in map)",
+    )
+    ner_threshold: float = Field(default=0.3, ge=0.0, le=1.0, description="Low values favour recall")
+    ner_batch_size: int = Field(default=16, gt=0)
+    ner_device: str = Field(default="auto")
+    ner_on_all_sources: bool = Field(default=False, description="Also run the NER model on non-sensitive sources")
+    eval_set: Path | None = Field(
+        default=None, description="Labelled JSONL (JengaNLP NER format) used to measure PII recall before training"
+    )
+    min_recall: float = Field(default=0.95, gt=0.0, le=1.0, description="Required recall of PII entities")
 
 
 class MLMConfig(ConfigModel):
@@ -129,10 +149,15 @@ class MLMConfig(ConfigModel):
         if sensitive:
             if not self.pii.redact:
                 raise ValueError("sensitive sources require pii.redact: true")
-            if self.pii.names_file is None:
+            if not self.pii.ner_model:
                 raise ValueError(
-                    "sensitive sources require pii.names_file: built-in PII redaction does not detect person "
-                    "names, so provide a list of names (e.g. Kenyan first/last names, staff names) to redact"
+                    "sensitive sources require pii.ner_model: regex redaction cannot find names or places, "
+                    "so set an NER model (a JengaNLP NER model or e.g. masakhane/afroxlmr-large-ner-masakhaner-1.0_2.0)"
+                )
+            if self.pii.eval_set is None:
+                raise ValueError(
+                    "sensitive sources require pii.eval_set: a labelled sample (JengaNLP NER JSONL) on which "
+                    "PII recall is measured before training"
                 )
             if not self.hub_private:
                 raise ValueError("models trained on sensitive sources can only be pushed with hub_private: true")
@@ -160,8 +185,10 @@ class MLMConfig(ConfigModel):
             if isinstance(src, dict) and isinstance(src.get("path"), str):
                 src["path"] = _resolve(src["path"], base)
         pii = data.get("pii")
-        if isinstance(pii, dict) and isinstance(pii.get("names_file"), str):
-            pii["names_file"] = _resolve(pii["names_file"], base)
+        if isinstance(pii, dict):
+            for key in ("eval_set", "ner_model"):  # ner_model may also be a Hub ID; left as-is if not a path
+                if isinstance(pii.get(key), str):
+                    pii[key] = _resolve(pii[key], base)
         if isinstance(data.get("probes_path"), str):
             data["probes_path"] = _resolve(data["probes_path"], base)
         return cls(**data)

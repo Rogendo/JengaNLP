@@ -40,11 +40,13 @@ def write_model_card(
             f"{src['train_examples']} | {src['eval_examples']} | x{src['repeat']} |"
         )
     redactions = corpus_report.get("totals", {}).get("redactions", {})
+    ner = corpus_report.get("ner_model")
+    recall = results.get("pii_recall")
     lines += [
         "",
-        f"- PII redaction: {'on' if corpus_report.get('pii_redaction') else 'off'}"
-        f"{' (with a names list)' if corpus_report.get('names_list_used') else ''}; "
-        f"redacted items by type: {redactions or 'none'}",
+        f"- PII redaction: {'on' if corpus_report.get('pii_redaction') else 'off'} (regex"
+        f"{f' + NER model `{ner}`' if ner else ''}); redacted items by type: {redactions or 'none'}",
+        *([f"- PII recall on the labelled sample before training: {recall:.1%}"] if recall is not None else []),
         "- Held-out examples were split from each source **before** repetition, so they never appear in training.",
         "",
         "## Results",
@@ -66,7 +68,7 @@ def write_model_card(
         "",
         "## Limitations",
         "",
-        "- Regex PII redaction and a names list reduce, but do not eliminate, personal data in the corpus.",
+        "- Regex and NER-based PII redaction reduce, but do not eliminate, personal data in the corpus.",
         "- Perplexity measures language-model fit, not downstream task quality; compare on your tasks.",
     ]
     path = Path(output_dir) / "README.md"

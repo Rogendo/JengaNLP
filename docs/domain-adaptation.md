@@ -33,7 +33,7 @@ jenga-nlp mlm evaluate --config examples/configs/mlm_afriberta_large_kenya.yaml 
   --model-dir results/mlm/afriberta_large_kenya
 ```
 
-Try the whole thing on CPU in a few minutes with `examples/configs/mlm_cpu_smoke.yaml`. It uses `afro-xlmr-mini`, a tiny synthetic corpus and 20 steps.
+Try the whole thing on CPU in a few minutes with `examples/configs/mlm_cpu_smoke.yaml`. It uses `afro-xlmr-mini`, a tiny synthetic corpus and 20 steps. `examples/configs/mlm_cpu_sensitive_demo.yaml` adds a fictional sensitive source to show NER redaction and the recall gate.
 
 ## The corpus
 
@@ -63,18 +63,36 @@ The pipeline, in order:
 
 Because the held-out split happens *before* repetition, held-out text can never appear in training, so held-out perplexity is honest.
 
-## Sensitive data guard rails
+## Protecting personal data
 
-Masked language models memorise text they see often, and they can then reproduce it through fill-mask queries. Real chats or case notes therefore have to be treated with care. A source marked `sensitive: true`:
+Masked language models memorise text they see often, and they can then reproduce it through fill-mask queries ("Mtoto `<mask>` alipelekwa makazi salama" → a real child's name). Personal data has to be removed from the corpus **before** training.
 
-- **requires PII redaction.** Kenyan phone numbers (any spacing, `07…`, `01…`, `+254…`), national IDs, KRA PINs, M-PESA transaction IDs, emails, URLs, P.O. boxes and dates are replaced with tags such as `[PHONE]`.
-- **requires a names list** (`pii.names_file`, one name per line). The built-in redaction **cannot detect person names**, so you provide them: common Kenyan first names and surnames, plus the names of children, carers and staff in your data. They're replaced with `[NAME]` as whole words, case-insensitive, with the longest match winning. See `examples/fixtures/names_example.txt`.
-- **can be repeated at most 2×.**
-- **forces private Hub uploads.** `hub_private: false` is rejected.
+Redaction combines two detectors:
 
-Each run writes `redaction_report.json`: example counts per source and redaction counts per type. It never contains the redacted values themselves. Read it before you publish anything.
+| Detector | Finds | Runs on |
+|---|---|---|
+| **Regex** (`pii.redact`) | Kenyan phone numbers (any spacing, `07…`, `01…`, `+254…`), national IDs, KRA PINs, M-PESA transaction IDs, emails, URLs, P.O. boxes, dates of birth | every source |
+| **NER model** (`pii.ner_model`) | names, places, and any other entity labels you map | sources marked `sensitive: true` (all sources with `pii.ner_on_all_sources: true`) |
 
-Redaction lowers the risk but doesn't remove it. Names not on your list, nicknames, and indirect identifiers such as locations can still remain. Review sensitive sources yourself.
+The NER model can be a **JengaNLP NER model folder** (trained with `jenga-nlp train`) or any **Hugging Face token-classification model**, e.g. `masakhane/afroxlmr-large-ner-masakhaner-1.0_2.0`: AfroXLMR-large fine-tuned on MasakhaNER, including Swahili (F1 93.4 on MasakhaNER 2.0 news text). Labels map to tags via `pii.ner_labels`. By default, `PER`/`NAME`/`VICTIM`/`PERPETRATOR` → `[NAME]`, `LOC`/`LOCATION`/`LANDMARK` → `[LOCATION]`, and `AGE` and `PHONE_NUMBER` are also redacted; `ORG` and `DATE` are kept. NER spans are widened to whole words, so a partly tagged name is still fully removed. `pii.ner_threshold` defaults to a low 0.3: for pretraining text, over-redacting is cheap and a missed name is not.
+
+### The recall gate
+
+An NER model protects data only as well as it finds it, so a source marked `sensitive: true` requires:
+
+- `pii.ner_model` and `pii.eval_set`: a **labelled sample of your own sensitive data** in JengaNLP's NER format (`{"text": ..., "entities": [{"start", "end", "label"}]}`, see `examples/fixtures/pii_eval_example.jsonl`);
+- **before training starts**, the whole redaction stack is scored on that sample. A PII entity counts as caught only if every character of it is redacted. If recall is below `pii.min_recall` (default 0.95), **training refuses to start** and reports the misses per tag;
+- at most 2× repetition, and Hub uploads as private only.
+
+Check recall on its own, without training, while you tune the model or threshold:
+
+```bash
+jenga-nlp mlm pii-check --config examples/configs/mlm_cpu_sensitive_demo.yaml
+```
+
+Each run writes `redaction_report.json` (counts per source and per type) and `pii_recall.json`. Neither ever contains the redacted values.
+
+A recall check is only as good as its sample. Label real examples from the sources you'll train on, including the hard cases: nicknames, Sheng spellings, names that are also ordinary words (*Amani*, *Baraka*, *Zawadi*). Indirect identifiers (a school plus an age plus a village) can still identify a child, so review sensitive data yourself.
 
 ## Reading the comparison
 

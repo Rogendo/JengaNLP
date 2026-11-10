@@ -16,12 +16,13 @@ from typing import Any
 
 from ..training.callbacks import LoggingCallback, failure_status
 from .config import MLMConfig
-from .data import PreparedCorpus, build_lm_datasets, prepare_corpus
+from .data import PreparedCorpus, build_lm_datasets, build_redactor, load_ner_detector, prepare_corpus
+from .pii_eval import check_pii_recall
 
 logger = logging.getLogger(__name__)
 
 # Written next to the model; uploaded to MLflow and the Hub with it.
-RESULT_FILES = ("mlm_results.json", "redaction_report.json", "experiment_config.yaml", "README.md")
+RESULT_FILES = ("mlm_results.json", "redaction_report.json", "pii_recall.json", "experiment_config.yaml", "README.md")
 
 
 def tracking_params(config: MLMConfig, corpus: PreparedCorpus) -> dict[str, Any]:
@@ -42,7 +43,7 @@ def tracking_params(config: MLMConfig, corpus: PreparedCorpus) -> dict[str, Any]
         "train_examples": len(corpus.train_texts),
         "eval_examples": len(corpus.eval_texts),
         "pii_redaction": config.pii.redact,
-        "names_list": bool(config.pii.names_file),
+        "ner_model": config.pii.ner_model or "-",
     }
     for source in config.corpus:
         params[f"source.{source.name}"] = f"repeat={source.repeat},sensitive={source.sensitive}"
@@ -139,7 +140,21 @@ class MLMTrainer:
         output_dir.mkdir(parents=True, exist_ok=True)
         set_seed(config.seed)
 
-        corpus = corpus or prepare_corpus(config)
+        # PII gate first: with sensitive sources, the redaction stack must reach pii.min_recall on the
+        # labelled sample before any text is used. The loaded NER model is reused for the corpus.
+        redactors = None
+        recall_report = None
+        if config.pii.redact and (corpus is None or config.has_sensitive_sources):
+            needs_ner = bool(config.pii.ner_model) and (config.has_sensitive_sources or config.pii.ner_on_all_sources)
+            ner = load_ner_detector(config) if needs_ner else None
+            redactors = {False: build_redactor(config, False, ner), True: build_redactor(config, True, ner)}
+            recall_report = check_pii_recall(config, redactors[True])
+            if recall_report is not None:
+                (output_dir / "pii_recall.json").write_text(json.dumps(recall_report, indent=2))
+                logger.info("PII recall %.1f%% on %s (required %.0f%%)", 100 * recall_report["recall"],
+                            config.pii.eval_set, 100 * config.pii.min_recall)
+
+        corpus = corpus or prepare_corpus(config, redactors=redactors)
         corpus.write_report(output_dir / "redaction_report.json")
         if not corpus.train_texts:
             raise ValueError("the corpus has no training examples after cleaning, redaction and dedup")
@@ -155,7 +170,8 @@ class MLMTrainer:
                 str(output_dir),
                 run_name=config.project_name,
                 params=tracking_params(config, corpus),
-                tags={"project_name": config.project_name, "mode": "mlm"},
+                tags={"project_name": config.project_name, "mode": "mlm",
+                      **({"pii_recall": f"{recall_report['recall']:.4f}"} if recall_report else {})},
                 config_dict=config.model_dump(mode="json"),
             )
         try:
@@ -173,6 +189,7 @@ class MLMTrainer:
             train_output = trainer.train()
             results: dict[str, Any] = {
                 "base_model": config.base_model,
+                "pii_recall": recall_report["recall"] if recall_report else None,
                 "train_examples": len(corpus.train_texts),
                 "eval_examples": len(corpus.eval_texts),
                 "train_blocks": len(train_ds),

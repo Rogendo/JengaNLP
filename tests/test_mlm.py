@@ -10,19 +10,17 @@ from pydantic import ValidationError
 
 from jenga_nlp.mlm.config import MLMConfig
 from jenga_nlp.mlm.data import prepare_corpus
-from jenga_nlp.mlm.pii_names import CorpusRedactor
+from jenga_nlp.mlm.redaction import CorpusRedactor, NERDetector, RegexDetector, Span
 
 TINY_MLM = "hf-internal-testing/tiny-xlm-roberta"
 
 
 def _config(tmp_path: Path, **overrides) -> MLMConfig:
-    names = tmp_path / "names.txt"
-    names.write_text("# fictional\nZawadi Achieng\nZawadi\nBaraka\n")
     data = {
         "base_model": TINY_MLM,
         "output_dir": str(tmp_path / "mlm_out"),
         "corpus": [{"name": "domain", "path": str(tmp_path / "domain.txt")}],
-        "pii": {"redact": True, "names_file": str(names)},
+        "pii": {"redact": True},
         "min_chars": 5,
         "eval_fraction": 0.2,
     }
@@ -30,26 +28,50 @@ def _config(tmp_path: Path, **overrides) -> MLMConfig:
     return MLMConfig(**data)
 
 
+SENSITIVE_PII = {"redact": True, "ner_model": "stub-ner", "eval_set": "eval.jsonl"}
+
+
+def _stub_ner(entities_for: dict[str, list[tuple[str, str]]], threshold: float = 0.3) -> NERDetector:
+    """An NER detector whose 'model' returns given (label, surface) entities per text."""
+
+    def predict(texts):
+        out = []
+        for text in texts:
+            ents = []
+            for label, surface in entities_for.get(text, []):
+                start = text.index(surface)
+                ents.append({"start": start, "end": start + len(surface), "label": label, "score": 0.9})
+            out.append(ents)
+        return out
+
+    return NERDetector("stub-ner", threshold=threshold, predict_fn=predict)
+
+
 # ---------------------------------------------------------------------------
 # Config guard rails
 # ---------------------------------------------------------------------------
 
-def test_sensitive_source_requires_names_list(tmp_path):
-    with pytest.raises(ValidationError, match="names_file"):
-        MLMConfig(base_model=TINY_MLM, corpus=[{"name": "chats", "path": "c.txt", "sensitive": True}])
+def test_sensitive_source_requires_ner_model_and_eval_set(tmp_path):
+    with pytest.raises(ValidationError, match="ner_model"):
+        _config(tmp_path, corpus=[{"name": "chats", "path": "c.txt", "sensitive": True}])
+    with pytest.raises(ValidationError, match="eval_set"):
+        _config(tmp_path, corpus=[{"name": "chats", "path": "c.txt", "sensitive": True}],
+                pii={"redact": True, "ner_model": "stub-ner"})
 
 
 def test_sensitive_source_repeat_is_capped(tmp_path):
     with pytest.raises(ValidationError, match="at most 2"):
-        _config(tmp_path, corpus=[{"name": "chats", "path": "c.txt", "sensitive": True, "repeat": 3}])
+        _config(tmp_path, corpus=[{"name": "chats", "path": "c.txt", "sensitive": True, "repeat": 3}],
+                pii=SENSITIVE_PII)
 
 
 def test_sensitive_source_requires_redaction_and_private_hub(tmp_path):
     with pytest.raises(ValidationError, match="pii.redact"):
         _config(tmp_path, corpus=[{"name": "c", "path": "c.txt", "sensitive": True}],
-                pii={"redact": False, "names_file": "n.txt"})
+                pii={**SENSITIVE_PII, "redact": False})
     with pytest.raises(ValidationError, match="hub_private"):
-        _config(tmp_path, corpus=[{"name": "c", "path": "c.txt", "sensitive": True}], hub_private=False)
+        _config(tmp_path, corpus=[{"name": "c", "path": "c.txt", "sensitive": True}], pii=SENSITIVE_PII,
+                hub_private=False)
 
 
 def test_source_needs_exactly_one_location():
@@ -93,35 +115,143 @@ def test_dedup_across_sources_and_min_chars(tmp_path):
     assert len(everything) == 3
 
 
-def test_names_phones_and_emails_are_redacted_and_report_has_no_raw_values(tmp_path):
-    cfg = _config(tmp_path, corpus=[{"name": "chats", "path": "c.txt", "sensitive": True}])
-    corpus = prepare_corpus(cfg, sources_text={"chats": [
-        "Mimi ni Zawadi Achieng, nipigie kwa +254 722 000 111 tafadhali",
-        "Mama Baraka ametuma email kwa afisa@example.org leo",
-        "Amanisha si jina kwenye orodha, Baraka ni jina",
-        "Namba yake ni 0110 123 456 kwa sasa",
-    ]})
-    text = " ".join(corpus.train_texts + corpus.eval_texts)
-    for raw in ["Zawadi", "Achieng", "Baraka", "722 000 111", "afisa@example.org", "0110 123 456"]:
-        assert raw not in text
-    assert "Amanisha" in text  # whole-word matching only
+def test_ner_runs_on_sensitive_sources_only_and_report_has_no_raw_values(tmp_path):
+    chat = "Mimi ni Zawadi Achieng kutoka Kisumu, nipigie kwa +254 722 000 111"
+    public = "Rais Ruto alihutubia wananchi wa Kisumu leo, piga 0712345678 kwa habari"
+    ner = _stub_ner({chat: [("PER", "Zawadi Achieng"), ("LOC", "Kisumu")], public: [("PER", "Ruto")]})
+    cfg = _config(tmp_path, corpus=[{"name": "news", "path": "n.txt"},
+                                    {"name": "chats", "path": "c.txt", "sensitive": True}], pii=SENSITIVE_PII,
+                  eval_fraction=0.01)
+    redactors = {False: CorpusRedactor([RegexDetector()]), True: CorpusRedactor([RegexDetector(), ner])}
+    corpus = prepare_corpus(cfg, sources_text={"news": [public], "chats": [chat]}, redactors=redactors)
+    by_source = corpus.texts_by_source()
+    assert by_source["chats"] == ["Mimi ni [NAME] kutoka [LOCATION], nipigie kwa [PHONE]"]
+    assert by_source["news"] == ["Rais Ruto alihutubia wananchi wa Kisumu leo, piga [PHONE] kwa habari"]  # regex only
     report = json.dumps(corpus.report)
     assert "Zawadi" not in report and "722" not in report
-    totals = corpus.report["totals"]["redactions"]
-    assert totals["name"] == 3 and totals["phone_ke"] == 2 and totals["email"] == 1
+    sources = {s["name"]: s for s in corpus.report["sources"]}
+    assert sources["chats"]["ner_redaction"] and not sources["news"]["ner_redaction"]
+    assert corpus.report["totals"]["redactions"] == {"name": 1, "location": 1, "phone_ke": 2}
 
 
-def test_overlapping_matches_keep_the_longest_name():
-    redactor = CorpusRedactor(names=["Zawadi", "Zawadi Achieng"])
+def test_ner_spans_are_widened_to_whole_words_and_thresholded():
+    text = "Mtoto Wanjiru amefika salama"
+    partial = NERDetector("stub", predict_fn=lambda ts: [[{"start": 6, "end": 9, "label": "B-PER", "score": 0.4}]])
+    assert CorpusRedactor([partial]).redact(text) == "Mtoto [NAME] amefika salama"  # "Wan" -> whole "Wanjiru"
+    weak = NERDetector("stub", threshold=0.5,
+                       predict_fn=lambda ts: [[{"start": 6, "end": 13, "label": "PER", "score": 0.4}]])
+    assert CorpusRedactor([weak]).redact(text) == text
+    org = NERDetector("stub", predict_fn=lambda ts: [[{"start": 6, "end": 13, "label": "ORG", "score": 0.9}]])
+    assert CorpusRedactor([org]).redact(text) == text  # ORG is not redacted by default
+
+
+def test_overlapping_spans_keep_the_longest():
+    class Fixed:
+        def __init__(self, spans):
+            self.spans = spans
+
+        def detect_batch(self, texts):
+            return [list(self.spans) for _ in texts]
+
+    redactor = CorpusRedactor([Fixed([Span(7, 13, "[NAME]", "name")]), Fixed([Span(7, 21, "[NAME]", "name")])])
     assert redactor.redact("Habari Zawadi Achieng!") == "Habari [NAME]!"
     assert redactor.counts["name"] == 1
+
+
+# ---------------------------------------------------------------------------
+# PII recall gate
+# ---------------------------------------------------------------------------
+
+def _eval_set(tmp_path: Path) -> Path:
+    rows = [
+        {"text": "Mtoto Wanjiru yuko Nyeri", "entities": [{"start": 6, "end": 13, "label": "NAME"},
+                                                       {"start": 19, "end": 24, "label": "LOCATION"}]},
+        {"text": "Afisa Otieno amefika", "entities": [{"start": 6, "end": 12, "label": "NAME"},
+                                                  {"start": 0, "end": 5, "label": "INCIDENT_TYPE"}]},
+    ]
+    path = tmp_path / "eval.jsonl"
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    return path
+
+
+def test_recall_counts_only_pii_labels_and_partial_redaction_is_a_miss(tmp_path):
+    from jenga_nlp.mlm.pii_eval import evaluate_redaction, load_labelled
+
+    labelled = load_labelled(_eval_set(tmp_path))
+
+    class Partial:  # catches Nyeri fully, "Wanj" of Wanjiru only, misses Otieno
+        def detect_batch(self, texts):
+            return [[Span(19, 24, "[LOCATION]", "location"), Span(6, 10, "[NAME]", "name")], []]
+
+    report = evaluate_redaction(CorpusRedactor([Partial()]), labelled)
+    assert report["pii_entities"] == 3  # INCIDENT_TYPE is not PII
+    assert report["caught"] == 1 and report["recall"] == pytest.approx(1 / 3)
+    assert report["per_tag"]["NAME"] == {"entities": 2, "caught": 0, "recall": 0.0}
+
+
+def test_training_refuses_to_start_when_pii_recall_is_too_low(tmp_path, monkeypatch):
+    import jenga_nlp.mlm.training as training
+    from jenga_nlp.mlm.pii_eval import PIIRecallError
+
+    eval_path = _eval_set(tmp_path)
+    (tmp_path / "chats.txt").write_text("Mtoto Wanjiru yuko Nyeri leo jioni\n")
+    cfg = _config(tmp_path, corpus=[{"name": "chats", "path": str(tmp_path / "chats.txt"), "sensitive": True}],
+                  pii={**SENSITIVE_PII, "eval_set": str(eval_path), "min_recall": 0.95})
+
+    blind = NERDetector("stub", predict_fn=lambda ts: [[] for _ in ts])
+    monkeypatch.setattr(training, "load_ner_detector", lambda config: blind)
+    with pytest.raises(PIIRecallError, match="below pii.min_recall"):
+        training.MLMTrainer(cfg).train()
+    assert not (Path(cfg.output_dir) / "redaction_report.json").exists()  # stopped before using any text
+
+    sees_all = _stub_ner({
+        "Mtoto Wanjiru yuko Nyeri": [("NAME", "Wanjiru"), ("LOCATION", "Nyeri")],
+        "Afisa Otieno amefika": [("NAME", "Otieno")],
+    })
+    from jenga_nlp.mlm.data import build_redactor
+    from jenga_nlp.mlm.pii_eval import check_pii_recall
+
+    report = check_pii_recall(cfg, build_redactor(cfg, True, sees_all))
+    assert report["passed"] and report["recall"] == 1.0
+
+
+def test_ner_formatter_keeps_entities_that_start_with_an_i_tag():
+    import torch
+
+    from jenga_nlp.core.config import HeadConfig
+    from jenga_nlp.inference.formatters import format_ner
+
+    text = "Amina Juma"
+    label_map = {0: "O", 1: "B-NAME", 2: "I-NAME"}
+    logits = torch.tensor([[9.0, 0, 0], [0, 0, 9.0], [0, 0, 9.0], [9.0, 0, 0]])  # CLS, I, I, SEP
+    offsets = torch.tensor([[0, 0], [0, 5], [6, 10], [0, 0]])
+    result = format_ner(logits, offsets, torch.ones(4), HeadConfig(name="h", num_labels=3), text, label_map)
+    assert [(e["start"], e["end"], e["label"]) for e in result["prediction"]] == [(0, 10, "NAME")]
+
+
+def test_ner_detector_with_a_huggingface_token_classification_model():
+    pytest.importorskip("transformers")
+    from transformers import AutoConfig
+
+    model = "hf-internal-testing/tiny-bert-for-token-classification"
+    try:
+        labels = AutoConfig.from_pretrained(model).id2label.values()
+    except Exception as exc:  # pragma: no cover - network dependent
+        pytest.skip(f"cannot load {model}: {exc}")
+    plain = {str(lab).split("-", 1)[-1].upper() for lab in labels}
+    detector = NERDetector(model, labels={lab: "NAME" for lab in plain}, threshold=0.0, device="cpu")
+    texts = ["Amina alikwenda Nairobi", "Hakuna jina hapa"]
+    spans = detector.detect_batch(texts)
+    assert len(spans) == 2
+    for text, text_spans in zip(texts, spans):
+        assert all(0 <= sp.start < sp.end <= len(text) for sp in text_spans)
 
 
 # ---------------------------------------------------------------------------
 # Tokenizer report
 # ---------------------------------------------------------------------------
 
-def test_tokenizer_report_hides_words_from_sensitive_sources(tmp_path):
+def test_tokenizer_report_hides_words_from_sensitive_sources(tmp_path, monkeypatch):
     from jenga_nlp.mlm.tokenizer_report import fragmentation, tokenizer_report, word_counts
 
     class SplitInTwo:
@@ -138,7 +268,10 @@ def test_tokenizer_report_hides_words_from_sensitive_sources(tmp_path):
     cfg = _config(tmp_path, corpus=[
         {"name": "public", "path": str(tmp_path / "pub.txt")},
         {"name": "chats", "path": str(tmp_path / "chats.txt"), "sensitive": True},
-    ])
+    ], pii=SENSITIVE_PII)
+    import jenga_nlp.mlm.data as data_module
+
+    monkeypatch.setattr(data_module, "load_ner_detector", lambda config: _stub_ner({}))
     report = tokenizer_report(cfg, [TINY_MLM])["models"][TINY_MLM]
     assert "most_fragmented" in report["sources"]["public"]
     assert "most_fragmented" not in report["sources"]["chats"]
@@ -295,3 +428,37 @@ def test_sentencepiece_is_a_core_dependency():
     pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
     deps = tomllib.loads(pyproject.read_text())["project"]["dependencies"]
     assert any(d.startswith("sentencepiece") for d in deps)
+
+
+def test_ner_detector_with_a_jenganlp_ner_model(tmp_path):
+    from jenga_nlp.cli import run_train
+    from jenga_nlp.core.config import ExperimentConfig
+
+    try:
+        from transformers import AutoTokenizer
+
+        AutoTokenizer.from_pretrained("hf-internal-testing/tiny-random-bert")
+    except Exception as exc:  # pragma: no cover - network dependent
+        pytest.skip(f"cannot load tiny model: {exc}")
+    fixture = Path(__file__).resolve().parent.parent / "examples" / "fixtures" / "sample_ner.jsonl"
+    ner_cfg = ExperimentConfig(
+        project_name="tiny_ner",
+        model={"base_model": "hf-internal-testing/tiny-random-bert"},
+        tokenizer={"max_length": 32},
+        tasks=[{"name": "helpline_ner", "type": "ner", "data_path": str(fixture), "text_column": "text",
+                "label_column": "entities", "heads": [{"name": "ner_head", "num_labels": 1}]}],
+        training={"output_dir": str(tmp_path / "ner_model"), "batch_size": 4, "num_epochs": 1, "device": "cpu",
+                  "logging": {"service": "none"}, "data": {"test_size": 0.25, "seed": 0}},
+    )
+    run_train(ner_cfg)
+
+    # A random tiny model predicts arbitrary labels; with every label mapped and threshold 0 we
+    # check the plumbing: the JengaNLP backend loads the folder and returns in-bounds spans.
+    labels = {lab: "NAME" for lab in ["NAME", "LOCATION", "INCIDENT_TYPE", "AGE", "GENDER", "LANDMARK",
+                                      "PERPETRATOR", "VICTIM", "PHONE_NUMBER"]}
+    detector = NERDetector(tmp_path / "ner_model", labels=labels, threshold=0.0, device="cpu")
+    texts = ["Amina called from Mombasa about neglect.", "Hakuna kitu hapa."]
+    spans = detector.detect_batch(texts)
+    assert len(spans) == 2
+    for text, text_spans in zip(texts, spans):
+        assert all(0 <= sp.start < sp.end <= len(text) for sp in text_spans)

@@ -1,5 +1,4 @@
 # CPU smoke test for the MLM workflow: tiny data, a small real model, a few steps.
-# It includes a FICTIONAL "sensitive" source to show the guard rails (names + phone redaction).
 # Run: jenga-nlp mlm train --config examples/configs/mlm_cpu_smoke.yaml
 
 project_name: mlm_cpu_smoke
@@ -10,14 +9,9 @@ corpus:
   - name: kenyan_domain
     path: ../fixtures/mlm_sample_corpus.txt
     repeat: 2
-  - name: helpline_example
-    path: ../fixtures/mlm_sensitive_example.txt
-    sensitive: true
-    repeat: 1
 
 pii:
   redact: true
-  names_file: ../fixtures/names_example.txt
 
 probes_path: ../fixtures/mlm_probes.jsonl
 

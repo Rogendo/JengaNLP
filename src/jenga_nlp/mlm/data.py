@@ -4,7 +4,8 @@ Order matters:
 
 1. load each source (local file or Hugging Face dataset)
 2. clean (normalise whitespace, drop short examples)
-3. redact PII (built-in types, extra regexes, listed names)
+3. redact PII (regex for fixed formats; an NER model for names/places on
+   sensitive sources, or on all sources if ``pii.ner_on_all_sources``)
 4. drop exact duplicates across *all* sources
 5. split each source into train / held-out **before** repetition, so repeated
    copies of a training example can never end up in the evaluation set
@@ -27,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import CorpusSource, MLMConfig
-from .pii_names import CorpusRedactor, load_names
+from .redaction import CorpusRedactor, NERDetector, RegexDetector
 
 _WHITESPACE = re.compile(r"\s+")
 
@@ -93,12 +94,39 @@ def clean(text: str) -> str:
     return _WHITESPACE.sub(" ", text).strip()
 
 
-def prepare_corpus(config: MLMConfig, sources_text: dict[str, Iterable[str]] | None = None) -> PreparedCorpus:
-    """Run the full pipeline. ``sources_text`` can inject texts per source name (tests)."""
-    redactor: CorpusRedactor | None = None
-    if config.pii.redact:
-        names = load_names(config.pii.names_file) if config.pii.names_file else []
-        redactor = CorpusRedactor(names, config.pii.extra_patterns, config.pii.detect_types)
+def build_redactor(config: MLMConfig, sensitive: bool, ner: NERDetector | None = None) -> CorpusRedactor | None:
+    """Regex redaction for every source; plus the NER detector for sensitive sources (or all, if configured)."""
+    pii = config.pii
+    if not pii.redact:
+        return None
+    detectors: list = [RegexDetector(pii.detect_types, pii.extra_patterns)]
+    if pii.ner_model and (sensitive or pii.ner_on_all_sources):
+        detectors.append(ner or load_ner_detector(config))
+    return CorpusRedactor(detectors)
+
+
+def load_ner_detector(config: MLMConfig) -> NERDetector:
+    pii = config.pii
+    return NERDetector(
+        pii.ner_model, labels=pii.ner_labels, threshold=pii.ner_threshold, task_name=pii.ner_task,
+        batch_size=pii.ner_batch_size, device=pii.ner_device,
+    )
+
+
+def prepare_corpus(
+    config: MLMConfig,
+    sources_text: dict[str, Iterable[str]] | None = None,
+    redactors: dict[bool, CorpusRedactor | None] | None = None,
+) -> PreparedCorpus:
+    """Run the full pipeline.
+
+    ``sources_text`` can inject texts per source name (tests). ``redactors`` maps
+    ``sensitive -> CorpusRedactor`` to reuse already-loaded detectors (the NER model is large).
+    """
+    if redactors is None:
+        needs_ner = bool(config.pii.ner_model) and (config.pii.ner_on_all_sources or config.has_sensitive_sources)
+        ner = load_ner_detector(config) if needs_ner and config.pii.redact else None
+        redactors = {False: build_redactor(config, False, ner), True: build_redactor(config, True, ner)}
 
     rng = random.Random(config.seed)
     seen: set[str] = set()
@@ -107,19 +135,27 @@ def prepare_corpus(config: MLMConfig, sources_text: dict[str, Iterable[str]] | N
     eval_by_source: dict[str, list[str]] = {}
     train_by_source: dict[str, list[str]] = {}
     sources_report: list[dict[str, Any]] = []
+    totals: Counter[str] = Counter()
 
     for source in config.corpus:
         raw = sources_text[source.name] if sources_text is not None else iter_source(source)
-        loaded = kept = duplicates = 0
-        before = Counter(redactor.counts) if redactor else Counter()
-        examples: list[str] = []
+        loaded = duplicates = 0
+        cleaned: list[str] = []
         for text in raw:
             loaded += 1
             text = clean(text)
-            if len(text) < config.min_chars:
-                continue
-            if redactor is not None:
-                text = redactor.redact(text)
+            if len(text) >= config.min_chars:
+                cleaned.append(text)
+
+        redactor = redactors.get(source.sensitive)
+        before = Counter(redactor.counts) if redactor else Counter()
+        if redactor is not None:
+            cleaned = redactor.redact_batch(cleaned)
+        redactions = dict(redactor.counts - before) if redactor else {}
+        totals.update(redactions)
+
+        examples: list[str] = []
+        for text in cleaned:
             if config.dedup:
                 key = text.casefold()
                 if key in seen:
@@ -127,7 +163,6 @@ def prepare_corpus(config: MLMConfig, sources_text: dict[str, Iterable[str]] | N
                     continue
                 seen.add(key)
             examples.append(text)
-            kept += 1
 
         rng.shuffle(examples)
         n_eval = 0
@@ -139,14 +174,15 @@ def prepare_corpus(config: MLMConfig, sources_text: dict[str, Iterable[str]] | N
         train_by_source[source.name] = train
         train_texts.extend(train * source.repeat)
 
-        redactions = dict(redactor.counts - before) if redactor else {}
+        uses_ner = redactor is not None and any(isinstance(d, NERDetector) for d in redactor.detectors)
         sources_report.append(
             {
                 "name": source.name,
                 "origin": source.hf_dataset or (Path(source.path).name if source.path else None),
                 "sensitive": source.sensitive,
+                "ner_redaction": uses_ner,
                 "loaded": loaded,
-                "kept_after_cleaning_and_dedup": kept,
+                "kept_after_cleaning_and_dedup": len(examples),
                 "duplicates_removed": duplicates,
                 "train_examples": len(train),
                 "eval_examples": len(held_out),
@@ -159,14 +195,14 @@ def prepare_corpus(config: MLMConfig, sources_text: dict[str, Iterable[str]] | N
     rng.shuffle(train_texts)
     report = {
         "pii_redaction": bool(config.pii.redact),
-        "names_list_used": bool(config.pii.names_file),
+        "ner_model": config.pii.ner_model,
         "dedup": config.dedup,
         "eval_split_before_repetition": True,
         "sources": sources_report,
         "totals": {
             "train_examples": len(train_texts),
             "eval_examples": len(eval_texts),
-            "redactions": dict(redactor.counts) if redactor else {},
+            "redactions": dict(totals),
         },
     }
     return PreparedCorpus(train_texts, eval_texts, eval_by_source, train_by_source, report)

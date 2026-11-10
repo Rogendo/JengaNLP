@@ -248,6 +248,22 @@ def run_mlm(args: argparse.Namespace) -> None:
         out_dir.mkdir(parents=True, exist_ok=True)
         _, md_path = write_comparison(comparison, out_dir)
         print(md_path.read_text())
+    elif args.mlm_command == "pii-check":
+        from .mlm.data import build_redactor
+        from .mlm.pii_eval import evaluate_redaction, load_labelled
+
+        eval_set = args.eval_set or config.pii.eval_set
+        if eval_set is None:
+            raise SystemExit("set pii.eval_set in the config or pass --eval-set")
+        redactor = build_redactor(config, sensitive=True)
+        if redactor is None:
+            raise SystemExit("pii.redact is false: nothing to check")
+        report = evaluate_redaction(redactor, load_labelled(eval_set), config.pii.ner_labels)
+        report["min_recall"] = config.pii.min_recall
+        report["passed"] = report["recall"] is not None and report["recall"] >= config.pii.min_recall
+        print(json.dumps(report, indent=2))
+        if not report["passed"]:
+            raise SystemExit(1)
     elif args.mlm_command == "tokenizer-report":
         from .mlm.tokenizer_report import tokenizer_report, write_tokenizer_report
 
@@ -380,6 +396,12 @@ def build_parser() -> argparse.ArgumentParser:
     mlm_tok.add_argument("--config", required=True)
     mlm_tok.add_argument("--models", nargs="+", help="Defaults to the config's base_model")
     mlm_tok.add_argument("--output-dir", help="Where to write tokenizer_report.json/.md (default: config output_dir)")
+
+    mlm_pii = mlm_sub.add_parser(
+        "pii-check", help="Measure PII recall of the redaction stack on pii.eval_set (the pre-training gate)."
+    )
+    mlm_pii.add_argument("--config", required=True)
+    mlm_pii.add_argument("--eval-set", help="Labelled JSONL (JengaNLP NER format); defaults to pii.eval_set")
 
     backends = sub.add_parser("backends", aliases=["backend"], help="Manage configured integration backends.")
     backend_sub = backends.add_subparsers(dest="backend_command", required=True, parser_class=JengaArgumentParser)

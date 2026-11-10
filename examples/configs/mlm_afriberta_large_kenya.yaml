@@ -25,16 +25,20 @@ corpus:
   - name: kenyan_domain
     path: ../fixtures/mlm_sample_corpus.txt
     repeat: 5
-  # Real conversations about people MUST be marked sensitive: they need pii.names_file,
-  # may be repeated at most 2x, and the model can only be pushed to the Hub as private.
+  # Real conversations about people MUST be marked sensitive. They are redacted with the NER
+  # model below, training only starts if PII recall on pii.eval_set reaches pii.min_recall,
+  # they may be repeated at most 2x, and the model can only be pushed to the Hub as private.
   # - name: helpline_chats
   #   path: /secure/data/helpline_chats.txt
   #   sensitive: true
   #   repeat: 2
 
 pii:
-  redact: true
-  names_file: ../fixtures/names_example.txt   # replace with your own names list
+  redact: true                       # regex: phones, IDs, KRA PINs, M-PESA IDs, emails, URLs (all sources)
+  ner_model: masakhane/afroxlmr-large-ner-masakhaner-1.0_2.0   # names/places in sensitive sources
+  ner_threshold: 0.3                 # low = favour recall
+  eval_set: ../fixtures/pii_eval_example.jsonl   # replace with a labelled sample of YOUR sensitive data
+  min_recall: 0.95
 
 probes_path: ../fixtures/mlm_probes.jsonl
 
