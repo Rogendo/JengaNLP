@@ -28,6 +28,7 @@ dependencies = [
     "setuptools>=68.0,<81",
     "torch>=2.2.0",
     "transformers>=4.40.0",
+    "sentencepiece>=0.1.99",  # AfriBERTa ships only a SentencePiece tokenizer model
     "datasets>=2.18.0",
     "pydantic>=2.5.0",
     "pyyaml>=6.0",

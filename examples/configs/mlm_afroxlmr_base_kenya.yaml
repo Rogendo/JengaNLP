@@ -1,0 +1,68 @@
+# Domain-adaptive MLM pretraining: Davlan/afro-xlmr-base -> Kenyan context.
+# 278M params. A40 (48 GB), bf16.
+# Run:      jenga-nlp mlm train --config examples/configs/mlm_afroxlmr_base_kenya.yaml
+# Compare:  jenga-nlp mlm evaluate --config examples/configs/mlm_afroxlmr_base_kenya.yaml --model-dir results/mlm/afroxlmr_base_kenya
+# Use it:   set `model.base_model: results/mlm/afroxlmr_base_kenya` in any JengaNLP task config.
+
+project_name: afroxlmr_base_kenya
+base_model: Davlan/afro-xlmr-base
+output_dir: results/mlm/afroxlmr_base_kenya
+
+corpus:
+  # Public Swahili text: foundation vocabulary and formal syntax.
+  - name: swahili_wikipedia
+    hf_dataset: wikimedia/wikipedia
+    hf_config: 20231101.sw
+    text_column: text
+    max_examples: 200000
+  # East African news style.
+  - name: masakhanews_swa
+    hf_dataset: masakhane/masakhanews
+    hf_config: swa
+    text_column: text
+    repeat: 2
+  # Your domain text (Sheng, code-switching, M-PESA, helpline). Synthetic data is fine to repeat.
+  - name: kenyan_domain
+    path: ../fixtures/mlm_sample_corpus.txt
+    repeat: 5
+  # Real conversations about people MUST be marked sensitive: they need pii.names_file,
+  # may be repeated at most 2x, and the model can only be pushed to the Hub as private.
+  # - name: helpline_chats
+  #   path: /secure/data/helpline_chats.txt
+  #   sensitive: true
+  #   repeat: 2
+
+pii:
+  redact: true
+  names_file: ../fixtures/names_example.txt   # replace with your own names list
+
+probes_path: ../fixtures/mlm_probes.jsonl
+
+block_size: 128
+mlm_probability: 0.15
+eval_fraction: 0.05
+min_chars: 20
+dedup: true
+seed: 42
+
+learning_rate: 5.0e-5
+num_epochs: 3
+batch_size: 32
+gradient_accumulation_steps: 2
+warmup_ratio: 0.06
+weight_decay: 0.01
+bf16: true
+gradient_checkpointing: false
+eval_steps: 1000
+save_steps: 1000
+logging_steps: 50
+dataloader_num_workers: 4
+
+logging:
+  service: mlflow
+  experiment_name: jenganlp_mlm_kenya
+  tracking_uri: sqlite:///mlflow.db
+
+push_to_hub: false
+hub_model_id: null
+hub_private: true

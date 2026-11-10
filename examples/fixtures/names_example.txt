@@ -1,0 +1,11 @@
+# Names to redact as [NAME] in sensitive sources: one per line, any case.
+# These are FICTIONAL examples. In real use, combine a list of common Kenyan
+# first names and surnames with the names of children, carers and staff in your data.
+Zawadi Achieng
+Zawadi
+Achieng
+Baraka
+Otieno
+Wanjiru
+Kiprono
+Amani

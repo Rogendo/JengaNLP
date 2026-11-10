@@ -7,6 +7,22 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [Unreleased]
+
+### Added
+- `jenga-nlp mlm`: domain-adaptive masked-language-model pretraining for XLM-R-family encoders
+  (AfriBERTa, AfroXLMR): `train`, `evaluate` (base vs adapted pseudo-perplexity per domain) and
+  `tokenizer-report` (sub-word fragmentation). Corpus pipeline with PII + names-list redaction,
+  cross-source dedup and a held-out split taken before repetition. Sources marked `sensitive`
+  require a names list, are capped at 2x repetition and can only be pushed to the Hub as private.
+  Output is a standard Hugging Face model usable as `model.base_model`. See `docs/domain-adaptation.md`.
+
+### Fixed
+- Kenyan phone redaction missed numbers written with spaces or hyphens (`+254 722 000 111`,
+  `0722-000-111`) and never redacted `01x` numbers.
+
+---
+
 ## [2.0.0] — 2026-11-11
 
 ### Added

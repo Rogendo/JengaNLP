@@ -132,6 +132,7 @@ Multi-task: list several tasks under `tasks:` — they share the encoder. See [`
 | MLflow / TensorBoard logging | **Stable** |
 | Hugging Face Hub export | Experimental |
 | Whisper ASR fine-tuning and serving | Experimental — not yet validated on real audio/GPU; needs `ffmpeg` installed to read audio files |
+| Domain-adaptive MLM pretraining (`jenga-nlp mlm`) | Experimental — tested on CPU with small models; not yet run on GPU-scale corpora |
 | Weights & Biases, Label Studio adapters | Experimental |
 | Explainability, human-in-the-loop routing, audit logging | Experimental |
 
@@ -142,12 +143,13 @@ Experimental features may change or move out of the core package.
 - [Quickstart](https://github.com/Rogendo/JengaNLP/blob/main/docs/quickstart.md)
 - [Configuration reference](https://github.com/Rogendo/JengaNLP/blob/main/docs/configuration.md)
 - [Inference and production serving](https://github.com/Rogendo/JengaNLP/blob/main/docs/inference.md)
+- [Domain-adaptive pretraining (MLM)](https://github.com/Rogendo/JengaNLP/blob/main/docs/domain-adaptation.md) — adapt AfriBERTa / AfroXLMR to Kenyan text (Swahili, Sheng, code-switching)
 - [Full usage guide](https://github.com/Rogendo/JengaNLP/blob/main/docs/usage-guide.md) — every workflow, including experimental ones
 - [Example configs](https://github.com/Rogendo/JengaNLP/blob/main/examples/configs/) and [fixtures](https://github.com/Rogendo/JengaNLP/blob/main/examples/fixtures/)
 
 ## Roadmap
 
-1. **African-language base models** — adapt an African-language encoder (AfriBERTa / AfroXLMR) to Swahili, Sheng and Swahili–English code-switched text.
+1. **African-language base models** — adapt an African-language encoder (AfriBERTa / AfroXLMR) to Swahili, Sheng and Swahili–English code-switched text. The training workflow is available as `jenga-nlp mlm` (experimental); adapted models and their evaluations are next.
 2. **Benchmarks** — public results on African-language datasets, including multi-task vs single-task baselines.
 3. **Ready-made templates with pretrained checkpoints** — mobile-money fraud, call-centre QA, Swahili sentiment, on the Hugging Face Hub.
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -166,7 +167,6 @@ def _write_eval_results(
     config: ExperimentConfig, model_dir: str | Path, metrics: dict[str, Any], eval_datasets: dict[str, Any]
 ) -> Path:
     """Persist evaluation results next to the model so they can be kept and compared."""
-    import json
     from datetime import datetime, timezone
 
     from .__version__ import __version__
@@ -215,6 +215,45 @@ def run_predict(
         )
         result = pipeline.predict(text=text, task_name=task_name, threshold=threshold)
         return result.to_dict()
+
+
+def run_mlm(args: argparse.Namespace) -> None:
+    """Dispatch ``jenga-nlp mlm ...`` commands."""
+    from .mlm.config import MLMConfig
+
+    config = MLMConfig.from_yaml(args.config)
+    if args.mlm_command == "train":
+        from .mlm.training import MLMTrainer
+
+        if args.output_dir:
+            config.output_dir = Path(args.output_dir)
+        if args.device:
+            config.device = args.device
+        if args.max_steps:
+            config.max_steps = args.max_steps
+        if args.push_to_hub:
+            config.push_to_hub = True
+        if args.hub_model_id:
+            config.hub_model_id = args.hub_model_id
+        config = MLMConfig(**config.model_dump())  # re-run the guard rails after overrides
+        print(json.dumps(MLMTrainer(config).train(), indent=2))
+    elif args.mlm_command == "evaluate":
+        from .mlm.evaluation import compare_models, write_comparison
+
+        comparison = compare_models(
+            config, args.model_dir, base_model=args.base_model,
+            max_sentences_per_domain=args.max_sentences, device=args.device,
+        )
+        out_dir = Path(args.model_dir) if Path(args.model_dir).is_dir() else Path(config.output_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        _, md_path = write_comparison(comparison, out_dir)
+        print(md_path.read_text())
+    elif args.mlm_command == "tokenizer-report":
+        from .mlm.tokenizer_report import tokenizer_report, write_tokenizer_report
+
+        report = tokenizer_report(config, args.models or [config.base_model])
+        _, md_path = write_tokenizer_report(report, args.output_dir or config.output_dir)
+        print(md_path.read_text())
 
 
 def run_backends(config: ExperimentConfig, command: str) -> None:
@@ -319,6 +358,29 @@ def build_parser() -> argparse.ArgumentParser:
     asr_train.add_argument("--push-to-hub", action="store_true")
     asr_train.add_argument("--hub-model-id")
 
+    mlm = sub.add_parser("mlm", help="Domain-adaptive masked-language-model pretraining (AfriBERTa, AfroXLMR, ...).")
+    mlm_sub = mlm.add_subparsers(dest="mlm_command", required=True, parser_class=JengaArgumentParser)
+
+    mlm_train = mlm_sub.add_parser("train", help="Continue MLM training of an encoder on your corpus.")
+    mlm_train.add_argument("--config", required=True)
+    mlm_train.add_argument("--output-dir")
+    mlm_train.add_argument("--device", help="auto, cpu or cuda")
+    mlm_train.add_argument("--max-steps", type=int, help="Override training length (e.g. a quick smoke test)")
+    mlm_train.add_argument("--push-to-hub", action="store_true")
+    mlm_train.add_argument("--hub-model-id")
+
+    mlm_eval = mlm_sub.add_parser("evaluate", help="Compare base vs adapted (pseudo-perplexity per domain).")
+    mlm_eval.add_argument("--config", required=True)
+    mlm_eval.add_argument("--model-dir", required=True, help="Adapted model folder or Hub ID")
+    mlm_eval.add_argument("--base-model", help="Defaults to the config's base_model")
+    mlm_eval.add_argument("--max-sentences", type=int, default=200, help="Per domain")
+    mlm_eval.add_argument("--device", default="auto")
+
+    mlm_tok = mlm_sub.add_parser("tokenizer-report", help="How badly each tokenizer fragments your corpus.")
+    mlm_tok.add_argument("--config", required=True)
+    mlm_tok.add_argument("--models", nargs="+", help="Defaults to the config's base_model")
+    mlm_tok.add_argument("--output-dir", help="Where to write tokenizer_report.json/.md (default: config output_dir)")
+
     backends = sub.add_parser("backends", aliases=["backend"], help="Manage configured integration backends.")
     backend_sub = backends.add_subparsers(dest="backend_command", required=True, parser_class=JengaArgumentParser)
 
@@ -393,6 +455,8 @@ def main(argv: list[str] | None = None) -> None:
                     hub_model_id=args.hub_model_id,
                 )
             )
+    elif args.command == "mlm":
+        run_mlm(args)
     elif args.command in ("backends", "backend"):
         config = ExperimentConfig.from_yaml(args.config)
         run_backends(config, args.backend_command)
