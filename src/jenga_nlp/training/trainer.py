@@ -27,7 +27,7 @@ from transformers import PreTrainedTokenizer
 from transformers.optimization import get_linear_schedule_with_warmup
 
 from ..core.config import ExperimentConfig, TaskSamplingStrategy, TaskType
-from ..core.model import MultiTaskModel
+from ..core.model import MultiTaskModel, check_state_dict_compatible
 from ..data.collators import ClassificationCollator, NERCollator, RegressionCollator
 from ..utils.device import get_device, move_to_device
 from .callbacks import (
@@ -35,6 +35,7 @@ from .callbacks import (
     EarlyStoppingCallback,
     LoggingCallback,
     TrainingCallback,
+    failure_status,
 )
 from .metrics import (
     compute_classification_metrics,
@@ -67,9 +68,16 @@ class Trainer:
         eval_datasets: dict[str, Any],
         callbacks: Optional[list[TrainingCallback]] = None,
         resume_from: str | Path | None = None,
+        run_name: str | None = None,
+        run_tags: dict[str, str] | None = None,
+        log_dir: str | Path | None = None,
     ) -> None:
         self.config = config
         self.training_config = config.training
+        self.run_name = run_name or config.project_name
+        # Where TensorBoard logs go; evaluation points this at the evaluated model folder.
+        self.log_dir = str(log_dir) if log_dir is not None else config.training.output_dir
+        self.run_tags = {"project_name": config.project_name, "mode": "train", **(run_tags or {})}
 
         # Device setup
         self.device = get_device(self.training_config.device)
@@ -87,10 +95,6 @@ class Trainer:
         self.use_amp = self.training_config.use_amp and self.device.type == "cuda"
         self.scaler = torch.amp.GradScaler("cuda") if self.use_amp else None
 
-        # Callbacks
-        self.callbacks: list[TrainingCallback] = callbacks or []
-        self._setup_builtin_callbacks()
-
         # Training state
         self.global_step = 0
         self.current_epoch = 0
@@ -103,12 +107,25 @@ class Trainer:
             self.global_step = int(self._resume_state.get("global_step", 0) or 0)
             self.current_epoch = int(self._resume_state.get("epoch", 0) or 0) + 1
 
+        # Callbacks last: built-in callbacks open tracker runs (e.g. MLflow), so set them
+        # up only after everything above that can fail (such as loading resume weights).
+        self.callbacks: list[TrainingCallback] = callbacks or []
+        self._setup_builtin_callbacks()
+
     def _setup_builtin_callbacks(self) -> None:
         """Set up built-in callbacks from config."""
         # Logging callback
         if self.training_config.logging:
+            config_dict = self.config.model_dump(mode="json")
             self.callbacks.append(
-                LoggingCallback(self.training_config.logging, self.training_config.output_dir)
+                LoggingCallback(
+                    self.training_config.logging,
+                    self.log_dir,
+                    run_name=self.run_name,
+                    params=_tracking_params(self.config),
+                    tags={**self.run_tags, "tasks": ",".join(t.name for t in self.config.tasks)},
+                    config_dict=config_dict,
+                )
             )
 
         # Early stopping callback
@@ -131,6 +148,23 @@ class Trainer:
                     greater_is_better=self.training_config.greater_is_better,
                 )
             )
+
+    def log_final_metrics(
+        self, metrics: dict[str, Any], artifact_files: list[str | Path] | None = None
+    ) -> None:
+        """Send metrics (and result files) from a standalone ``evaluate()`` to the tracker, then close it."""
+        for cb in self.callbacks:
+            if isinstance(cb, LoggingCallback):
+                cb.log_metrics(metrics)
+                for path in artifact_files or []:
+                    cb.log_artifact(path)
+        self.close_trackers("FINISHED")
+
+    def close_trackers(self, status: str = "FINISHED") -> None:
+        """Close experiment trackers (MLflow/TensorBoard) with a final run status."""
+        for cb in self.callbacks:
+            if isinstance(cb, LoggingCallback):
+                cb.close(status=status)
 
     def _create_dataloaders(self, datasets: dict[str, Any], is_eval: bool) -> dict[str, DataLoader]:
         """Create task-specific dataloaders with proper collators."""
@@ -193,6 +227,7 @@ class Trainer:
         for candidate in model_candidates:
             if candidate.exists():
                 state_dict = torch.load(candidate, map_location=self.device, weights_only=True)
+                check_state_dict_compatible(state_dict, candidate)
                 self.model.load_state_dict(state_dict)
                 logger.info(f"Loaded model weights from {candidate}")
                 return
@@ -201,11 +236,22 @@ class Trainer:
 
     def _create_optimizer_and_scheduler(self, num_training_steps: int) -> tuple[AdamW, Any]:
         """Create optimizer and learning rate scheduler."""
-        optimizer = AdamW(
-            self.model.parameters(),
-            lr=self.training_config.learning_rate,
-            weight_decay=self.training_config.weight_decay,
-        )
+        lr = self.training_config.learning_rate
+        fusion = getattr(self.model, "fusion", None)
+        fusion_cfg = self.config.model.fusion
+        fusion_params = list(fusion.parameters()) if fusion is not None else []
+        multiplier = fusion_cfg.effective_lr_multiplier() if fusion_cfg is not None else 1.0
+        if fusion_params and multiplier != 1.0:
+            # Fusion layers start from scratch, so they may need a higher learning
+            # rate than the pretrained encoder to learn within a fine-tuning run.
+            fusion_ids = {id(p) for p in fusion_params}
+            param_groups: Any = [
+                {"params": [p for p in self.model.parameters() if id(p) not in fusion_ids], "lr": lr},
+                {"params": fusion_params, "lr": lr * multiplier},
+            ]
+        else:
+            param_groups = self.model.parameters()
+        optimizer = AdamW(param_groups, lr=lr, weight_decay=self.training_config.weight_decay)
         scheduler = get_linear_schedule_with_warmup(
             optimizer,
             num_warmup_steps=self.training_config.warmup_steps,
@@ -225,10 +271,28 @@ class Trainer:
 
         optimizer, scheduler = self._create_optimizer_and_scheduler(effective_steps)
         if self._resume_state is not None:
+            optimizer_restored = False
             if self._resume_state.get("optimizer_state_dict") is not None:
-                optimizer.load_state_dict(self._resume_state["optimizer_state_dict"])
-            if self._resume_state.get("scheduler_state_dict") is not None:
+                configured_lrs = [group["initial_lr"] for group in optimizer.param_groups]
+                try:
+                    optimizer.load_state_dict(self._resume_state["optimizer_state_dict"])
+                    optimizer_restored = True
+                except ValueError as exc:  # parameter groups changed, e.g. fusion added or lr_multiplier 1 <-> >1
+                    logger.warning(f"Could not restore optimizer state ({exc}); continuing with a fresh optimizer")
+                if optimizer_restored:
+                    restored_lrs = [group.get("initial_lr") for group in optimizer.param_groups]
+                    if any(abs(a - b) > 1e-12 * max(abs(a), 1.0) for a, b in zip(configured_lrs, restored_lrs)):
+                        logger.warning(
+                            f"Resuming keeps the saved learning rates {restored_lrs}; the config now asks for "
+                            f"{configured_lrs}. Changed learning_rate / fusion.lr_multiplier values take effect "
+                            "only in a new training run."
+                        )
+            if optimizer_restored and self._resume_state.get("scheduler_state_dict") is not None:
                 scheduler.load_state_dict(self._resume_state["scheduler_state_dict"])
+            else:
+                # The saved scheduler state belongs to the old optimizer layout; rebuild
+                # the learning-rate schedule position from the resumed step instead.
+                self._fast_forward_scheduler(scheduler)
             if self._resume_state.get("scaler_state_dict") is not None and self.scaler is not None:
                 self.scaler.load_state_dict(self._resume_state["scaler_state_dict"])
             logger.info(f"Resuming from epoch {self.current_epoch} and step {self.global_step}")
@@ -248,7 +312,23 @@ class Trainer:
             desc="Training",
         )
 
+        # Defined up front so resuming an already-finished run (where the epoch
+        # loop below does not execute) still returns valid final metrics.
+        eval_metrics: dict[str, Any] = {}
+        already_complete = self.current_epoch >= self.training_config.num_epochs
+
         try:
+            if already_complete:
+                logger.info(
+                    f"Run already completed {self.training_config.num_epochs} epoch(s); "
+                    "nothing left to train. Increase training.num_epochs to continue training."
+                )
+                if self.eval_dataloaders:
+                    eval_metrics = self.evaluate()
+                    for cb in self.callbacks:
+                        if isinstance(cb, LoggingCallback):
+                            cb.log_metrics(eval_metrics, step=self.global_step)
+
             for epoch in range(self.current_epoch, self.training_config.num_epochs):
                 self.current_epoch = epoch
                 self.model.train()
@@ -256,31 +336,28 @@ class Trainer:
                 for cb in self.callbacks:
                     cb.on_epoch_begin(epoch=epoch)
 
-                # Create iterators for round-robin
                 iterators = {name: iter(dl) for name, dl in self.train_dataloaders.items()}
                 epoch_losses: list[float] = []
 
-                while iterators:
-                    task_names = list(iterators.keys())
+                for task_name in self._build_task_schedule(epoch):
+                    try:
+                        batch = next(iterators[task_name])
+                    except StopIteration:
+                        # Sampled schedules can revisit a small task: start a fresh pass over it.
+                        iterators[task_name] = iter(self.train_dataloaders[task_name])
+                        batch = next(iterators[task_name])
 
-                    for task_name in task_names:
-                        try:
-                            batch = next(iterators[task_name])
-                        except StopIteration:
-                            del iterators[task_name]
-                            continue
+                    loss = self._training_step(batch, task_name, optimizer, scheduler)
 
-                        loss = self._training_step(batch, task_name, optimizer, scheduler)
+                    epoch_losses.append(loss)
+                    self.global_step += 1
 
-                        epoch_losses.append(loss)
-                        self.global_step += 1
+                    # Callbacks
+                    for cb in self.callbacks:
+                        cb.on_step(step=self.global_step, loss=loss)
 
-                        # Callbacks
-                        for cb in self.callbacks:
-                            cb.on_step(step=self.global_step, loss=loss)
-
-                        progress.update(1)
-                        progress.set_postfix(loss=f"{loss:.4f}", epoch=epoch + 1)
+                    progress.update(1)
+                    progress.set_postfix(loss=f"{loss:.4f}", epoch=epoch + 1)
 
                 # Evaluate
                 eval_metrics = {}
@@ -313,23 +390,106 @@ class Trainer:
                     logger.info("Training stopped early")
                     break
 
-        except Exception as exc:
-            for cb in self.callbacks:
-                on_error = getattr(cb, "on_train_error", None)
-                if callable(on_error):
-                    on_error(exc, model=self.model, global_step=self.global_step, epoch=self.current_epoch)
-            raise
-        finally:
+            # Save the final, self-contained model folder *before* end-of-training
+            # callbacks run, so trackers (e.g. MLflow) can upload it. Inside the try,
+            # so a failed save (e.g. disk full) still closes trackers as FAILED.
+            output_dir = Path(self.training_config.output_dir)
+            self.model.save(output_dir)
+            self._save_tokenizer(output_dir)
+            self.config.to_yaml(output_dir / "experiment_config.yaml")
+
+        except BaseException as exc:
             progress.close()
+            if isinstance(exc, Exception):
+                for cb in self.callbacks:
+                    on_error = getattr(cb, "on_train_error", None)
+                    if callable(on_error):
+                        try:
+                            on_error(exc, model=self.model, global_step=self.global_step, epoch=self.current_epoch)
+                        except Exception:
+                            logger.exception(f"{type(cb).__name__}.on_train_error failed")
+            # Still close loggers/trackers, marking the run as failed or interrupted;
+            # there is no finished model to publish. Never let a callback mask `exc`.
+            self._notify_train_end(swallow_errors=True, model=self.model, status=failure_status(exc))
+            raise
 
-            # End callbacks
-            for cb in self.callbacks:
-                cb.on_train_end(model=self.model)
-
-        # Save final model
-        self.model.save(self.training_config.output_dir)
+        progress.close()
+        self._notify_train_end(model=self.model, output_dir=str(output_dir))
 
         return {"history": self.training_history, "final_metrics": eval_metrics}
+
+    def _notify_train_end(self, swallow_errors: bool = False, **kwargs: Any) -> None:
+        """Call ``on_train_end`` on every callback, passing only the arguments it accepts.
+
+        Older callbacks may declare ``on_train_end(self, model)``; newer arguments such as
+        ``output_dir`` and ``status`` are only passed to callbacks that accept them.
+        """
+        for cb in self.callbacks:
+            try:
+                cb.on_train_end(**_accepted_kwargs(cb.on_train_end, kwargs))
+            except Exception:
+                if not swallow_errors:
+                    raise
+                logger.exception(f"{type(cb).__name__}.on_train_end failed while handling another error")
+
+    def _fast_forward_scheduler(self, scheduler: Any) -> None:
+        """Advance a fresh LR scheduler to the resumed optimizer step."""
+        import warnings
+
+        steps = self.global_step // self.training_config.gradient_accumulation_steps
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")  # "scheduler.step() before optimizer.step()"
+            for _ in range(steps):
+                scheduler.step()
+
+    def _build_task_schedule(self, epoch: int) -> list[str]:
+        """Return the order in which tasks are trained during one epoch.
+
+        The schedule always has ``sum(len(dataloader))`` steps, so the learning-rate
+        schedule is the same for every strategy.
+
+        - ``round_robin``: one batch per task in turn until each task is exhausted.
+        - ``proportional``: each step picks a task with probability proportional to
+          its number of training examples.
+        - ``temperature``: probability proportional to ``size ** (1 / temperature)``;
+          ``temperature > 1`` flattens the distribution, upsampling small tasks.
+
+        Sampled schedules are reproducible: the generator is seeded from
+        ``training.data.seed`` and the epoch.
+        """
+        loaders = self.train_dataloaders
+        names = list(loaders.keys())
+        batches = {name: len(dl) for name, dl in loaders.items()}
+        total_steps = sum(batches.values())
+        strategy = self.training_config.task_sampling
+
+        if strategy == TaskSamplingStrategy.ROUND_ROBIN or len(names) <= 1:
+            schedule: list[str] = []
+            remaining = dict(batches)
+            while any(remaining.values()):
+                for name in names:
+                    if remaining[name]:
+                        schedule.append(name)
+                        remaining[name] -= 1
+            return schedule
+
+        sizes = torch.tensor([float(len(loaders[n].dataset)) for n in names])
+        exponent = 1.0 if strategy == TaskSamplingStrategy.PROPORTIONAL else 1.0 / self.training_config.temperature
+        probs = sizes.pow(exponent)
+        probs = probs / probs.sum()
+
+        seed = self.training_config.data.seed if self.training_config.data is not None else 0
+        generator = torch.Generator().manual_seed(int(seed) * 1000 + epoch)
+        picks = torch.multinomial(probs, total_steps, replacement=True, generator=generator)
+        return [names[i] for i in picks.tolist()]
+
+    def _save_tokenizer(self, output_dir: Path) -> None:
+        """Save the tokenizer next to the weights so inference does not need the Hub."""
+        from ..core.model import TOKENIZER_DIRNAME
+
+        save_pretrained = getattr(self.tokenizer, "save_pretrained", None)
+        if callable(save_pretrained):
+            save_pretrained(str(output_dir / TOKENIZER_DIRNAME))
 
     def _training_step(
         self,
@@ -488,5 +648,53 @@ class Trainer:
 
     def close(self) -> None:
         """Clean up resources."""
-        for cb in self.callbacks:
-            cb.on_train_end()
+        self._notify_train_end()
+
+
+def _tracking_params(config: ExperimentConfig) -> dict[str, Any]:
+    """Flatten the hyperparameters worth comparing across runs into tracker params."""
+    t = config.training
+    params: dict[str, Any] = {
+        "base_model": config.model.base_model,
+        "dropout": config.model.dropout,
+        "max_length": config.tokenizer.max_length,
+        "learning_rate": t.learning_rate,
+        "batch_size": t.batch_size,
+        "eval_batch_size": t.eval_batch_size,
+        "num_epochs": t.num_epochs,
+        "weight_decay": t.weight_decay,
+        "warmup_steps": t.warmup_steps,
+        "gradient_accumulation_steps": t.gradient_accumulation_steps,
+        "max_grad_norm": t.max_grad_norm,
+        "use_amp": t.use_amp,
+        "device": t.device,
+        "task_sampling": getattr(t.task_sampling, "value", t.task_sampling),
+        "num_tasks": len(config.tasks),
+    }
+    fusion = config.model.fusion
+    params["fusion"] = getattr(fusion.type, "value", fusion.type) if fusion is not None else "none"
+    if fusion is not None and params["fusion"] != "none":
+        params["fusion.lr_multiplier"] = fusion.effective_lr_multiplier()
+        params["fusion.num_attention_heads"] = fusion.num_attention_heads
+        params["fusion.gate_init_value"] = fusion.gate_init_value
+    if t.data is not None:
+        params["test_size"] = t.data.test_size
+        params["seed"] = t.data.seed
+    for task in config.tasks:
+        params[f"task.{task.name}.type"] = getattr(task.type, "value", task.type)
+        params[f"task.{task.name}.heads"] = ",".join(f"{h.name}:{h.num_labels}" for h in task.heads)
+    return params
+
+
+def _accepted_kwargs(func: Any, kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Subset of ``kwargs`` that ``func`` accepts (all of them if it takes ``**kwargs``)."""
+    import inspect
+
+    try:
+        params = inspect.signature(func).parameters.values()
+    except (TypeError, ValueError):
+        return kwargs
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params):
+        return kwargs
+    names = {p.name for p in params if p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)}
+    return {k: v for k, v in kwargs.items() if k in names}

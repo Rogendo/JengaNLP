@@ -243,3 +243,104 @@ def test_tokenizer_config_defaults():
 def test_tokenizer_config_rejects_zero_max_length():
     with pytest.raises(Exception):
         TokenizerConfig(max_length=0)
+
+
+# ---------------------------------------------------------------------------
+# from_yaml — relative data_path resolution
+# ---------------------------------------------------------------------------
+
+def _write_config(config_dir: Path, data_path: str) -> Path:
+    cfg = {**MINIMAL_CONFIG, "tasks": [{**MINIMAL_TASK, "data_path": data_path}]}
+    path = config_dir / "config.yaml"
+    path.write_text(yaml.safe_dump(cfg))
+    return path
+
+
+def test_from_yaml_resolves_data_path_relative_to_config(tmp_path, monkeypatch):
+    (tmp_path / "configs").mkdir()
+    (tmp_path / "fixtures").mkdir()
+    data = tmp_path / "fixtures" / "train.jsonl"
+    data.write_text('{"text": "x", "label": 0}\n')
+    cfg_path = _write_config(tmp_path / "configs", "../fixtures/train.jsonl")
+
+    elsewhere = tmp_path / "some" / "other" / "dir"
+    elsewhere.mkdir(parents=True)
+    monkeypatch.chdir(elsewhere)
+
+    cfg = ExperimentConfig.from_yaml(cfg_path)
+    assert Path(cfg.tasks[0].data_path) == data.resolve()
+
+
+def test_from_yaml_prefers_cwd_relative_data_path(tmp_path, monkeypatch):
+    (tmp_path / "configs").mkdir()
+    (tmp_path / "configs" / "train.jsonl").write_text("{}\n")
+    (tmp_path / "train.jsonl").write_text("{}\n")
+    cfg_path = _write_config(tmp_path / "configs", "train.jsonl")
+    monkeypatch.chdir(tmp_path)
+
+    cfg = ExperimentConfig.from_yaml(cfg_path)
+    assert cfg.tasks[0].data_path == "train.jsonl"
+
+
+def test_from_yaml_leaves_missing_data_path_unchanged(tmp_path, monkeypatch):
+    cfg_path = _write_config(tmp_path, "missing/train.jsonl")
+    monkeypatch.chdir(tmp_path)
+
+    cfg = ExperimentConfig.from_yaml(cfg_path)
+    assert cfg.tasks[0].data_path == "missing/train.jsonl"
+
+
+# ---------------------------------------------------------------------------
+# Legacy "question_answering" alias formats like qa_scoring
+# ---------------------------------------------------------------------------
+
+def test_question_answering_alias_uses_qa_formatter():
+    import torch
+
+    from jenga_nlp.inference.formatters import format_result
+
+    def task(type_):
+        return TaskConfig(
+            name="qa", type=type_, data_path="x.jsonl",
+            heads=[HeadConfig(name="opening", num_labels=1), HeadConfig(name="hold", num_labels=2)],
+        )
+
+    logits = {"opening": torch.tensor([[2.0]]), "hold": torch.tensor([[-1.0, 3.0]])}
+    alias = format_result(task("question_answering"), logits, sample_idx=0)
+    canonical = format_result(task("qa_scoring"), logits, sample_idx=0)
+    assert alias == canonical
+    assert alias["hold"]["prediction"] != [-1.0, 3.0], "raw logits leaked through"
+
+
+# ---------------------------------------------------------------------------
+# Unknown keys are ignored but never silently
+# ---------------------------------------------------------------------------
+
+def test_misspelled_key_warns_with_suggestion_and_is_ignored():
+    from jenga_nlp.core.config import UnknownConfigKeyWarning
+
+    cfg = {**MINIMAL_CONFIG, "model": {"base_model": "distilbert-base-uncased", "fussion": {"type": "attention"}}}
+    with pytest.warns(UnknownConfigKeyWarning, match=r"'fussion' in ModelConfig.*Did you mean 'fusion'\?"):
+        parsed = ExperimentConfig(**cfg)
+    assert parsed.model.fusion is None  # still ignored, as before
+
+
+def test_unknown_nested_key_names_its_section():
+    from jenga_nlp.core.config import UnknownConfigKeyWarning
+
+    cfg = {**MINIMAL_CONFIG, "training": {"learnig_rate": 1e-4}}
+    with pytest.warns(UnknownConfigKeyWarning, match=r"'learnig_rate' in TrainingConfig.*'learning_rate'"):
+        ExperimentConfig(**cfg)
+
+
+def test_valid_and_saved_configs_do_not_warn(tmp_path):
+    import warnings
+
+    from jenga_nlp.core.config import UnknownConfigKeyWarning
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UnknownConfigKeyWarning)
+        cfg = ExperimentConfig(**MINIMAL_CONFIG)
+        path = tmp_path / "saved.yaml"
+        cfg.to_yaml(path)
+        ExperimentConfig.from_yaml(path)  # what JengaNLP writes must read back cleanly

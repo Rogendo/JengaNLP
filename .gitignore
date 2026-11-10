@@ -78,3 +78,8 @@ docs/_build/
 cache/
 __pycache__/
 examples/configs/results
+
+# Local experiment tracking
+mlflow.db
+mlruns/
+mlartifacts/

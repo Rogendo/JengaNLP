@@ -12,7 +12,7 @@ tokenizer:
 tasks:
   - name: fraud_detection
     type: single_label_classification
-    data_path: /home/naynek/jenga_nlp/examples/fixtures/sample_classification.jsonl
+    data_path: ../fixtures/sample_classification.jsonl
     text_column: text
     label_column: label
     heads:

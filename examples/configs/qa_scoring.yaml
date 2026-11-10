@@ -51,7 +51,8 @@ tasks:
   - name: qa_scoring
     type: qa_scoring
     # data_path: data/sample_qa_transcripts.jsonl
-    data_path: data/data/synthetic_qa.json
+    # Dataset not bundled with JengaNLP: point this at your own copy.
+    data_path: ../data/synthetic_qa.json
     text_column: transcript
     label_column: labels
     heads:

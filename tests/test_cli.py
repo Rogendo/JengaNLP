@@ -123,3 +123,45 @@ def test_unknown_command_exits_nonzero():
         text=True,
     )
     assert result.returncode != 0
+
+
+# ---------------------------------------------------------------------------
+# backends command output
+# ---------------------------------------------------------------------------
+
+from pathlib import Path  # noqa: E402
+
+from jenga_nlp.cli import main  # noqa: E402
+
+_CONFIGS = Path(__file__).resolve().parent.parent / "examples" / "configs"
+
+
+@pytest.mark.parametrize("command_name", ["backends", "backend"])
+def test_backends_status_reports_logging_and_integrations(capsys, command_name):
+    main([command_name, "status", "--config", str(_CONFIGS / "fixture_mpesa_fraud_cpu.yaml")])
+    out = capsys.readouterr().out
+    assert "training logging: mlflow (sqlite:///mlflow.db)" in out
+    assert "integrations: none configured" in out
+
+
+def test_predict_accepts_device():
+    args = build_parser().parse_args(
+        ["predict", "--config", "c.yaml", "--model-dir", "m", "--text", "hi", "--device", "cpu"]
+    )
+    assert args.device == "cpu"
+    without_device = build_parser().parse_args(["predict", "--config", "c.yaml", "--model-dir", "m", "--text", "hi"])
+    assert without_device.device is None
+
+
+def test_backends_status_without_logging_section(tmp_path, capsys):
+    cfg = tmp_path / "nolog.yaml"
+    cfg.write_text(
+        "project_name: x\n"
+        "tasks:\n"
+        "  - name: t\n"
+        "    type: single_label_classification\n"
+        "    data_path: x.jsonl\n"
+        "    heads: [{name: h, num_labels: 2}]\n"
+    )
+    main(["backends", "status", "--config", str(cfg)])
+    assert "training logging: none" in capsys.readouterr().out

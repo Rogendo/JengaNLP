@@ -316,8 +316,8 @@ def format_result(
     """
     task_type = task_config.type
 
-    # QA uses a special multi-head formatter
-    if task_type == TaskType.QA_SCORING:
+    # QA uses a special multi-head formatter ("question_answering" is the legacy alias)
+    if task_type in (TaskType.QA_SCORING, TaskType.QUESTION_ANSWERING):
         return format_qa(logits, task_config, sample_idx, threshold)
 
     heads: dict[str, dict[str, Any]] = {}

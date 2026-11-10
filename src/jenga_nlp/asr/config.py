@@ -6,12 +6,12 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import Field
 
-from ..core.config import IntegrationConfig
+from ..core.config import ConfigModel, IntegrationConfig
 
 
-class WhisperConfig(BaseModel):
+class WhisperConfig(ConfigModel):
     """Minimal config for a Whisper transcription workflow."""
 
     model_name: str = Field(default="openai/whisper-small")
@@ -23,7 +23,7 @@ class WhisperConfig(BaseModel):
     batch_size: int = Field(default=8, gt=0)
 
 
-class WhisperDatasetConfig(BaseModel):
+class WhisperDatasetConfig(ConfigModel):
     """Dataset source configuration for Whisper fine-tuning."""
 
     source: str = Field(default="manifest")
@@ -47,7 +47,7 @@ class WhisperDatasetConfig(BaseModel):
     num_eval_samples: int | None = Field(default=None, gt=0)
 
 
-class WhisperPreprocessingConfig(BaseModel):
+class WhisperPreprocessingConfig(ConfigModel):
     """Audio and transcript preprocessing rules for Whisper fine-tuning."""
 
     sampling_rate: int = Field(default=16000, gt=0)
@@ -60,7 +60,7 @@ class WhisperPreprocessingConfig(BaseModel):
     validate_audio_paths: bool = Field(default=False)
 
 
-class WhisperFineTuningConfig(BaseModel):
+class WhisperFineTuningConfig(ConfigModel):
     """Config for Whisper fine-tuning."""
 
     model_name: str = Field(default="openai/whisper-small")

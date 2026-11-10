@@ -14,7 +14,7 @@ import logging
 import os
 import shutil
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from ..core.config import CheckpointConfig, LoggingConfig, LoggingService
 
@@ -49,20 +49,40 @@ class TrainingCallback:
         return False
 
 
+def failure_status(exc: BaseException) -> str:
+    """Tracker status for a run that ended with ``exc``: ``KILLED`` for Ctrl-C, otherwise ``FAILED``."""
+    return "KILLED" if isinstance(exc, KeyboardInterrupt) else "FAILED"
+
+
 class LoggingCallback(TrainingCallback):
     """Callback for logging metrics to TensorBoard or MLflow, with clean callbacks.
     """
 
-    def __init__(self, config: LoggingConfig, output_dir: str) -> None:
+    def __init__(
+        self,
+        config: LoggingConfig,
+        output_dir: str,
+        run_name: str | None = None,
+        params: dict[str, Any] | None = None,
+        tags: dict[str, str] | None = None,
+        config_dict: dict[str, Any] | None = None,
+    ) -> None:
         self.config = config
         self._writer: Any = None
+        self._closed = False
 
         if config.service == LoggingService.TENSORBOARD:
+            from datetime import datetime
+
             from torch.utils.tensorboard import SummaryWriter
 
-            log_dir = os.path.join(output_dir, "logs", config.experiment_name)
+            # One sub-directory per run, so `tensorboard --logdir <output_dir>/logs`
+            # lists train and eval runs separately instead of merging them.
+            run_dir = f"{run_name or 'run'}_{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+            log_dir = os.path.join(output_dir, "logs", config.experiment_name, run_dir)
             self._writer = SummaryWriter(log_dir=log_dir)
             logger.info(f"TensorBoard logging to: {log_dir}")
+            self._tensorboard_write_run_info(params, tags, config_dict)
 
         elif config.service == LoggingService.MLFLOW:
             import mlflow
@@ -70,8 +90,23 @@ class LoggingCallback(TrainingCallback):
             tracking_uri = config.tracking_uri or os.getenv("MLFLOW_TRACKING_URI")
             if tracking_uri:
                 mlflow.set_tracking_uri(tracking_uri)
-            mlflow.set_experiment(config.experiment_name)
-            run = mlflow.start_run()
+            experiment = mlflow.set_experiment(config.experiment_name)
+            try:
+                # MLflow 3 opens experiments in its GenAI view unless told otherwise;
+                # mark JengaNLP experiments as model training (never override a user's choice).
+                if "mlflow.experimentKind" not in (experiment.tags or {}):
+                    mlflow.set_experiment_tag("mlflow.experimentKind", "custom_model_development")
+            except Exception:
+                logger.debug("Could not set MLflow experiment kind tag")
+            run = mlflow.start_run(run_name=run_name, tags=tags or None)
+            try:
+                if params:
+                    # MLflow rejects values longer than 6000 chars; keep params short.
+                    mlflow.log_params({k: str(v)[:500] for k, v in params.items()})
+                if config_dict:
+                    mlflow.log_dict(config_dict, "experiment_config.yaml")
+            except Exception as exc:  # Non-fatal: never fail training over logging
+                logger.warning("Could not log MLflow params/config: %s", exc)
             # Capture active run and expose a clickable UI URL when possible
             self._writer = mlflow
             try:
@@ -103,6 +138,26 @@ class LoggingCallback(TrainingCallback):
                 logger.debug("Could not determine MLflow run URL")
             logger.info("MLflow experiment: %s", config.experiment_name)
 
+    def _tensorboard_write_run_info(
+        self,
+        params: dict[str, Any] | None,
+        tags: dict[str, str] | None,
+        config_dict: dict[str, Any] | None,
+    ) -> None:
+        """Record hyperparameters, tags and the full config in TensorBoard's Text tab."""
+        try:
+            rows = {**(tags or {}), **(params or {})}
+            if rows:
+                table = "| key | value |\n|---|---|\n" + "\n".join(f"| {k} | {v} |" for k, v in rows.items())
+                self._writer.add_text("run/params", table, 0)
+            if config_dict:
+                import yaml
+
+                config_yaml = yaml.safe_dump(config_dict, sort_keys=False)
+                self._writer.add_text("run/config", "```yaml\n" + config_yaml + "```", 0)
+        except Exception as exc:  # Non-fatal
+            logger.warning("Could not write run info to TensorBoard: %s", exc)
+
     def on_step(self, step: int, loss: float, **kwargs: Any) -> None:
         if step % self.config.log_every_n_steps != 0:
             return
@@ -113,18 +168,70 @@ class LoggingCallback(TrainingCallback):
             self._writer.log_metrics({"train_loss": loss}, step=step)
 
     def on_epoch_end(self, epoch: int, metrics: dict[str, float], **kwargs: Any) -> None:
+        # Use the global step (same axis as train_loss) when the trainer provides it,
+        # so train and eval curves line up in TensorBoard/MLflow charts.
+        step = kwargs.get("global_step", epoch)
         if self.config.service == LoggingService.TENSORBOARD and self._writer:
             for key, value in metrics.items():
-                self._writer.add_scalar(f"eval/{key}", value, epoch)
+                self._writer.add_scalar(f"eval/{key}", value, step)
         elif self.config.service == LoggingService.MLFLOW and self._writer:
-            self._writer.log_metrics(metrics, step=epoch)
+            self._writer.log_metrics(metrics, step=step)
 
-    def on_train_end(self, **kwargs: Any) -> None:
+    def log_metrics(self, metrics: dict[str, float], step: int = 0, prefix: str = "") -> None:
+        """Log a metrics dict outside the training loop (e.g. standalone evaluation)."""
+        if self._closed or not self._writer:
+            return
+        numeric = {f"{prefix}{k}": float(v) for k, v in metrics.items() if isinstance(v, (int, float))}
+        if self.config.service == LoggingService.TENSORBOARD:
+            # Same "eval/" namespace the training loop uses, so charts group together.
+            for key, value in numeric.items():
+                self._writer.add_scalar(key if prefix else f"eval/{key}", value, step)
+        elif self.config.service == LoggingService.MLFLOW:
+            self._writer.log_metrics(numeric, step=step)
+
+    def close(self, status: str = "FINISHED") -> None:
+        """Flush and close the logger. Safe to call more than once.
+
+        Args:
+            status: MLflow run status to record: ``FINISHED``, ``FAILED`` or ``KILLED``.
+        """
+        if self._closed:
+            return
+        self._closed = True
         if self.config.service == LoggingService.TENSORBOARD and self._writer:
             self._writer.close()
         elif self.config.service == LoggingService.MLFLOW and self._writer:
-            self._writer.end_run()
-        logger.info("Logger closed")
+            self._writer.end_run(status=status)
+        logger.info("Logger closed (%s)", status)
+
+    def log_artifact(self, path: str | Path, artifact_path: str | None = None) -> None:
+        """Upload a file or folder to the tracker (MLflow only; a no-op for TensorBoard)."""
+        if self._closed or self.config.service != LoggingService.MLFLOW or not self._writer:
+            return
+        path = Path(path)
+        try:
+            if path.is_dir():
+                self._writer.log_artifacts(str(path), artifact_path=artifact_path)
+            elif path.is_file():
+                self._writer.log_artifact(str(path), artifact_path=artifact_path)
+        except Exception as exc:  # Non-fatal: never fail training over artifact upload
+            logger.warning("Could not upload %s to MLflow: %s", path, exc)
+
+    def on_train_end(self, output_dir: str | None = None, status: str = "FINISHED", **kwargs: Any) -> None:
+        if output_dir and status == "FINISHED" and self.config.service == LoggingService.MLFLOW:
+            out = Path(output_dir)
+            if self.config.log_model:
+                for name in MODEL_ARTIFACTS:
+                    self.log_artifact(out / name, artifact_path="model/" + name if (out / name).is_dir() else "model")
+                logger.info("Uploaded model folder to MLflow artifacts (model/)")
+            if self.config.log_checkpoints and (out / "checkpoints").is_dir():
+                self.log_artifact(out / "checkpoints", artifact_path="checkpoints")
+                logger.info("Uploaded checkpoints to MLflow artifacts (checkpoints/)")
+        self.close(status=status)
+
+
+# Files that make up a self-contained, loadable JengaNLP model folder.
+MODEL_ARTIFACTS = ("model.pt", "metadata.json", "experiment_config.yaml", "encoder_config", "tokenizer")
 
 
 class EarlyStoppingCallback(TrainingCallback):
@@ -188,8 +295,8 @@ class CheckpointCallback(TrainingCallback):
         greater_is_better: bool = False,
     ) -> None:
         self.config = config
+        # Created on first save, so evaluation-only trainers don't create empty folders.
         self.output_dir = Path(output_dir) / "checkpoints"
-        self.output_dir.mkdir(parents=True, exist_ok=True)
         self.metric_name = metric_name
         self.greater_is_better = greater_is_better
         self.best_value = float("-inf") if greater_is_better else float("inf")

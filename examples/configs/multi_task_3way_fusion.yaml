@@ -9,7 +9,7 @@
 # modulate the shared encoder representations via a gated attention layer.
 #
 # Usage:
-#   python -m jenga_ai train --config configs/multi_task_3way_fusion.yaml
+#   jenga-nlp train --config examples/configs/multi_task_3way_fusion.yaml
 
 project_name: security_nlp_3task
 
@@ -63,7 +63,7 @@ tasks:
   # Task 1: M-PESA Fraud Detection (binary)
   - name: fraud_detection
     type: single_label_classification
-    data_path: /home/naynek/jenga_nlp/examples/fixtures/sample_classification.jsonl
+    data_path: ../fixtures/sample_classification.jsonl
     text_column: text
     label_column: label
     heads:
@@ -75,7 +75,7 @@ tasks:
   # Task 2: Customer Sentiment (3-class)
   - name: sentiment_analysis
     type: single_label_classification
-    data_path: /home/naynek/jenga_nlp/examples/fixtures/sample_sentiment.jsonl
+    data_path: ../fixtures/sample_sentiment.jsonl
     text_column: text
     label_column: label
     heads:
@@ -87,7 +87,7 @@ tasks:
   # Task 3: Call QA Scoring (6 heads, 17 sub-metrics)
   - name: call_quality
     type: question_answering
-    data_path: /home/naynek/jenga_nlp/examples/fixtures/sample_qa_transcripts.jsonl
+    data_path: ../fixtures/sample_qa_transcripts.jsonl
     text_column: transcript
     label_column: labels
     label_maps:

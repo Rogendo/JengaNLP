@@ -12,7 +12,7 @@ tokenizer:
 tasks:
   - name: call_qa_scoring
     type: qa_scoring
-    data_path: /home/naynek/jenga_nlp/examples/fixtures/sample_qa_transcripts.jsonl
+    data_path: ../fixtures/sample_qa_transcripts.jsonl
     text_column: transcript
     label_column: labels
     heads:

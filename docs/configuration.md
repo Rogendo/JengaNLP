@@ -114,7 +114,7 @@ training:
   logging:
     service: mlflow
     experiment_name: my_project
-    tracking_uri: file:///tmp/jenganlp_mlruns
+    tracking_uri: sqlite:///mlflow.db
 ```
 
 Adapter logging:

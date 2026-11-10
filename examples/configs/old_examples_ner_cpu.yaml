@@ -12,7 +12,8 @@ tokenizer:
 tasks:
   - name: child_helpline_ner
     type: ner
-    data_path: /home/naynek/Desktop/Jenga-AI/examples/data/ner_synthetic_dataset_v1.jsonl
+    # Dataset not bundled with JengaNLP: point this at your own copy.
+    data_path: ../data/ner_synthetic_dataset_v1.jsonl
     text_column: text
     label_column: entities
     heads:

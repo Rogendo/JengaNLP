@@ -12,7 +12,7 @@ tokenizer:
 tasks:
   - name: mpesa_fraud_detection
     type: single_label_classification
-    data_path: /home/naynek/jenga_nlp/examples/fixtures/sample_classification.jsonl
+    data_path: ../fixtures/sample_classification.jsonl
     text_column: text
     label_column: label
     heads:
@@ -36,7 +36,7 @@ training:
   logging:
     service: mlflow
     experiment_name: fixture_mpesa_fraud_cpu
-    tracking_uri: http://127.0.0.1:5000
+    tracking_uri: sqlite:///mlflow.db
     log_every_n_steps: 1
   checkpoint:
     save_every_n_epochs: 1
