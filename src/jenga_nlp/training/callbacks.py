@@ -49,6 +49,11 @@ class TrainingCallback:
         return False
 
 
+def failure_status(exc: BaseException) -> str:
+    """Tracker status for a run that ended with ``exc``: ``KILLED`` for Ctrl-C, otherwise ``FAILED``."""
+    return "KILLED" if isinstance(exc, KeyboardInterrupt) else "FAILED"
+
+
 class LoggingCallback(TrainingCallback):
     """Callback for logging metrics to TensorBoard or MLflow, with clean callbacks.
     """

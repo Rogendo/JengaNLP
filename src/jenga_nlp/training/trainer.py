@@ -35,6 +35,7 @@ from .callbacks import (
     EarlyStoppingCallback,
     LoggingCallback,
     TrainingCallback,
+    failure_status,
 )
 from .metrics import (
     compute_classification_metrics,
@@ -94,10 +95,6 @@ class Trainer:
         self.use_amp = self.training_config.use_amp and self.device.type == "cuda"
         self.scaler = torch.amp.GradScaler("cuda") if self.use_amp else None
 
-        # Callbacks
-        self.callbacks: list[TrainingCallback] = callbacks or []
-        self._setup_builtin_callbacks()
-
         # Training state
         self.global_step = 0
         self.current_epoch = 0
@@ -109,6 +106,11 @@ class Trainer:
             self._load_resume_model_weights(self.resume_from)
             self.global_step = int(self._resume_state.get("global_step", 0) or 0)
             self.current_epoch = int(self._resume_state.get("epoch", 0) or 0) + 1
+
+        # Callbacks last: built-in callbacks open tracker runs (e.g. MLflow), so set them
+        # up only after everything above that can fail (such as loading resume weights).
+        self.callbacks: list[TrainingCallback] = callbacks or []
+        self._setup_builtin_callbacks()
 
     def _setup_builtin_callbacks(self) -> None:
         """Set up built-in callbacks from config."""
@@ -271,11 +273,20 @@ class Trainer:
         if self._resume_state is not None:
             optimizer_restored = False
             if self._resume_state.get("optimizer_state_dict") is not None:
+                configured_lrs = [group["initial_lr"] for group in optimizer.param_groups]
                 try:
                     optimizer.load_state_dict(self._resume_state["optimizer_state_dict"])
                     optimizer_restored = True
-                except ValueError as exc:  # e.g. parameter groups changed (fusion lr_multiplier)
+                except ValueError as exc:  # parameter groups changed, e.g. fusion added or lr_multiplier 1 <-> >1
                     logger.warning(f"Could not restore optimizer state ({exc}); continuing with a fresh optimizer")
+                if optimizer_restored:
+                    restored_lrs = [group.get("initial_lr") for group in optimizer.param_groups]
+                    if any(abs(a - b) > 1e-12 * max(abs(a), 1.0) for a, b in zip(configured_lrs, restored_lrs)):
+                        logger.warning(
+                            f"Resuming keeps the saved learning rates {restored_lrs}; the config now asks for "
+                            f"{configured_lrs}. Changed learning_rate / fusion.lr_multiplier values take effect "
+                            "only in a new training run."
+                        )
             if optimizer_restored and self._resume_state.get("scheduler_state_dict") is not None:
                 scheduler.load_state_dict(self._resume_state["scheduler_state_dict"])
             else:
@@ -379,33 +390,47 @@ class Trainer:
                     logger.info("Training stopped early")
                     break
 
+            # Save the final, self-contained model folder *before* end-of-training
+            # callbacks run, so trackers (e.g. MLflow) can upload it. Inside the try,
+            # so a failed save (e.g. disk full) still closes trackers as FAILED.
+            output_dir = Path(self.training_config.output_dir)
+            self.model.save(output_dir)
+            self._save_tokenizer(output_dir)
+            self.config.to_yaml(output_dir / "experiment_config.yaml")
+
         except BaseException as exc:
             progress.close()
             if isinstance(exc, Exception):
                 for cb in self.callbacks:
                     on_error = getattr(cb, "on_train_error", None)
                     if callable(on_error):
-                        on_error(exc, model=self.model, global_step=self.global_step, epoch=self.current_epoch)
+                        try:
+                            on_error(exc, model=self.model, global_step=self.global_step, epoch=self.current_epoch)
+                        except Exception:
+                            logger.exception(f"{type(cb).__name__}.on_train_error failed")
             # Still close loggers/trackers, marking the run as failed or interrupted;
-            # there is no finished model to publish.
-            status = "KILLED" if isinstance(exc, KeyboardInterrupt) else "FAILED"
-            for cb in self.callbacks:
-                cb.on_train_end(model=self.model, status=status)
+            # there is no finished model to publish. Never let a callback mask `exc`.
+            self._notify_train_end(swallow_errors=True, model=self.model, status=failure_status(exc))
             raise
 
         progress.close()
-
-        # Save the final, self-contained model folder *before* end-of-training
-        # callbacks run, so trackers (e.g. MLflow) can upload it.
-        output_dir = Path(self.training_config.output_dir)
-        self.model.save(output_dir)
-        self._save_tokenizer(output_dir)
-        self.config.to_yaml(output_dir / "experiment_config.yaml")
-
-        for cb in self.callbacks:
-            cb.on_train_end(model=self.model, output_dir=str(output_dir))
+        self._notify_train_end(model=self.model, output_dir=str(output_dir))
 
         return {"history": self.training_history, "final_metrics": eval_metrics}
+
+    def _notify_train_end(self, swallow_errors: bool = False, **kwargs: Any) -> None:
+        """Call ``on_train_end`` on every callback, passing only the arguments it accepts.
+
+        Older callbacks may declare ``on_train_end(self, model)``; newer arguments such as
+        ``output_dir`` and ``status`` are only passed to callbacks that accept them.
+        """
+        for cb in self.callbacks:
+            try:
+                cb.on_train_end(**_accepted_kwargs(cb.on_train_end, kwargs))
+            except Exception:
+                if not swallow_errors:
+                    raise
+                logger.exception(f"{type(cb).__name__}.on_train_end failed while handling another error")
 
     def _fast_forward_scheduler(self, scheduler: Any) -> None:
         """Advance a fresh LR scheduler to the resumed optimizer step."""
@@ -623,8 +648,7 @@ class Trainer:
 
     def close(self) -> None:
         """Clean up resources."""
-        for cb in self.callbacks:
-            cb.on_train_end()
+        self._notify_train_end()
 
 
 def _tracking_params(config: ExperimentConfig) -> dict[str, Any]:
@@ -660,3 +684,17 @@ def _tracking_params(config: ExperimentConfig) -> dict[str, Any]:
         params[f"task.{task.name}.type"] = getattr(task.type, "value", task.type)
         params[f"task.{task.name}.heads"] = ",".join(f"{h.name}:{h.num_labels}" for h in task.heads)
     return params
+
+
+def _accepted_kwargs(func: Any, kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Subset of ``kwargs`` that ``func`` accepts (all of them if it takes ``**kwargs``)."""
+    import inspect
+
+    try:
+        params = inspect.signature(func).parameters.values()
+    except (TypeError, ValueError):
+        return kwargs
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params):
+        return kwargs
+    names = {p.name for p in params if p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)}
+    return {k: v for k, v in kwargs.items() if k in names}

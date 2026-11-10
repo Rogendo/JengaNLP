@@ -172,6 +172,16 @@ class FusionConfig(ConfigModel):
         ),
     )
 
+    @model_validator(mode="after")
+    def _attention_fusion_needs_residual(self) -> FusionConfig:
+        if self.type == FusionType.ATTENTION and not self.use_residual:
+            raise ValueError(
+                "attention fusion always keeps the residual connection (the task context is added to each "
+                "token's features); use_residual: false is not supported. Set use_residual: true, or use "
+                "type: concatenation for a fusion without a residual."
+            )
+        return self
+
     def effective_lr_multiplier(self) -> float:
         """The multiplier actually used: the configured value, or 10 for attention / 1 otherwise."""
         if self.lr_multiplier is not None:

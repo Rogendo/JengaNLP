@@ -230,3 +230,43 @@ def test_resume_rejects_pre_2_0_attention_fusion_weights(tmp_path):
     fake = SimpleNamespace(device="cpu", model=torch.nn.Linear(1, 1))
     with pytest.raises(ValueError, match="pre-2.0 attention fusion"):
         Trainer._load_resume_model_weights(fake, tmp_path)
+
+
+def test_attention_fusion_rejects_use_residual_false():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="always keeps the residual"):
+        FusionConfig(type=FusionType.ATTENTION, use_residual=False)
+    FusionConfig(type=FusionType.CONCATENATION, use_residual=False)  # still supported
+
+
+# ---------------------------------------------------------------------------
+# on_train_end compatibility with older callbacks
+# ---------------------------------------------------------------------------
+
+class _OldStyleCallback:
+    def __init__(self):
+        self.seen = None
+
+    def on_train_end(self, model):  # pre-2.0 signature: no **kwargs
+        self.seen = model
+
+
+class _ExplodingCallback:
+    def on_train_end(self, **kwargs):
+        raise RuntimeError("callback broke")
+
+
+def test_on_train_end_only_gets_arguments_the_callback_accepts():
+    old = _OldStyleCallback()
+    fake = SimpleNamespace(callbacks=[old])
+    Trainer._notify_train_end(fake, model="M", output_dir="/x", status="FAILED")
+    assert old.seen == "M"
+
+
+def test_failing_callback_does_not_mask_the_original_error():
+    fake = SimpleNamespace(callbacks=[_ExplodingCallback(), _OldStyleCallback()])
+    Trainer._notify_train_end(fake, swallow_errors=True, model="M", status="FAILED")  # no raise
+    assert fake.callbacks[1].seen == "M"  # later callbacks still notified
+    with pytest.raises(RuntimeError, match="callback broke"):
+        Trainer._notify_train_end(fake, model="M")  # success path still surfaces callback bugs

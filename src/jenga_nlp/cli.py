@@ -57,6 +57,16 @@ class JengaArgumentParser(argparse.ArgumentParser):
         self.exit(2, f"\nError: {message}\n\n{CLI_QUICKSTART}\n")
 
 
+def _abort_run(runtime: IntegrationRuntime, trainer: Any, exc: BaseException) -> None:
+    """Close trackers and the integrations runtime after ``exc``, recording FAILED or KILLED."""
+    from .training.callbacks import failure_status
+
+    status = failure_status(exc)
+    if trainer is not None:
+        trainer.close_trackers(status)  # idempotent: a no-op if the trainer already closed them
+    runtime.finish(status=status.lower())
+
+
 def _build_runtime(config: ExperimentConfig, run_dir: str | Path | None = None) -> IntegrationRuntime:
     """Activity log + integrations; written to ``run_dir`` (default: the config's training.output_dir)."""
     return IntegrationRuntime(run_dir=run_dir or config.training.output_dir, integrations=config.integrations)
@@ -74,6 +84,7 @@ def run_train(config: ExperimentConfig, output_dir: str | Path | None = None, de
 
     runtime = _build_runtime(config)
     runtime.start(run_name=config.project_name, config=config.model_dump(mode="python"), tags={"project_name": config.project_name})
+    trainer = None
     try:
         runtime.emit_info("loading tokenizer")
 
@@ -98,9 +109,7 @@ def run_train(config: ExperimentConfig, output_dir: str | Path | None = None, de
         )
         results = trainer.train()
     except BaseException as exc:
-        # The trainer already closed its own trackers; make sure integration
-        # backends (W&B, MLflow adapter, ...) also record the run as failed.
-        runtime.finish(status="killed" if isinstance(exc, KeyboardInterrupt) else "failed")
+        _abort_run(runtime, trainer, exc)
         raise
     runtime.emit_info("training complete", stage=ActivityEventStage.TRAIN, payload={"metrics": results})
     config.to_yaml(Path(config.training.output_dir) / "experiment_config.yaml")
@@ -146,11 +155,7 @@ def run_evaluate(config: ExperimentConfig, model_dir: str | Path, device: str | 
         results_path = _write_eval_results(config, model_dir, result, eval_datasets)
         trainer.log_final_metrics(result, artifact_files=[results_path])
     except BaseException as exc:
-        # Never leave an MLflow run active or the integrations runtime open.
-        killed = isinstance(exc, KeyboardInterrupt)
-        if trainer is not None:
-            trainer.close_trackers("KILLED" if killed else "FAILED")
-        runtime.finish(status="killed" if killed else "failed")
+        _abort_run(runtime, trainer, exc)
         raise
     runtime.emit_info("evaluation complete", stage=ActivityEventStage.EVAL, payload={"metrics": result})
     runtime.finish(status="success")

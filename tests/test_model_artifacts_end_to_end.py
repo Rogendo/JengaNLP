@@ -305,3 +305,93 @@ def test_crashed_training_is_not_recorded_as_finished(tmp_path, tiny_model_avail
     run = client.search_runs([exp.experiment_id])[0]
     assert run.info.status == expected
     assert not any(a.path == "model" for a in client.list_artifacts(run.info.run_id))  # no half-model uploaded
+
+
+# ---------------------------------------------------------------------------
+# Second review: tracker shutdown on every path
+# ---------------------------------------------------------------------------
+
+def _no_run_left_running(cfg) -> None:
+    mlflow, client = _mlflow_client(cfg)
+    assert mlflow.active_run() is None
+    exp = client.get_experiment_by_name("artifacts_test")
+    statuses = [r.info.status for r in client.search_runs([exp.experiment_id])] if exp else []
+    assert "RUNNING" not in statuses, statuses
+
+
+def test_failed_resume_does_not_leave_a_tracker_run_open(tmp_path, tiny_model_available, monkeypatch):
+    import torch
+
+    from jenga_nlp.resume import resume_training
+
+    monkeypatch.chdir(tmp_path)
+    cfg = _config(tmp_path, logging=_mlflow_logging(tmp_path), checkpoints=True)
+    run_train(cfg)
+    for weights in (tmp_path / "run").rglob("model.pt"):  # simulate a pre-2.0 fusion checkpoint
+        torch.save({"fusion.attention.0.weight": torch.zeros(1)}, weights)
+
+    with pytest.raises(ValueError, match="pre-2.0 attention fusion"):
+        resume_training(cfg, tmp_path / "run", device="cpu")
+    _no_run_left_running(cfg)
+
+
+def test_failed_final_save_closes_tracker_as_failed(tmp_path, tiny_model_available, monkeypatch):
+    from jenga_nlp.core.model import MultiTaskModel
+
+    monkeypatch.chdir(tmp_path)
+    cfg = _config(tmp_path, logging=_mlflow_logging(tmp_path))
+
+    def disk_full(self, save_dir):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(MultiTaskModel, "save", disk_full)
+    with pytest.raises(OSError, match="disk full"):
+        run_train(cfg)
+    _no_run_left_running(cfg)
+    mlflow, client = _mlflow_client(cfg)
+    run = client.search_runs([client.get_experiment_by_name("artifacts_test").experiment_id])[0]
+    assert run.info.status == "FAILED"
+
+
+def test_old_style_callback_does_not_hide_training_error(tmp_path, tiny_model_available, monkeypatch):
+    from jenga_nlp.training.callbacks import TrainingCallback
+    from jenga_nlp.training.trainer import Trainer
+
+    class OldStyle(TrainingCallback):
+        def on_train_end(self, model):  # pre-2.0 override without **kwargs
+            self.called = True
+
+    original_setup = Trainer._setup_builtin_callbacks
+
+    def setup_with_old_style(self):
+        original_setup(self)
+        self.callbacks.append(OldStyle())
+
+    monkeypatch.setattr(Trainer, "_setup_builtin_callbacks", setup_with_old_style)
+    run_train(_config(tmp_path))  # succeeds with an old-style callback
+
+    def explode(self, *args, **kwargs):
+        raise RuntimeError("the real training error")
+
+    monkeypatch.setattr(Trainer, "_training_step", explode)
+    with pytest.raises(RuntimeError, match="the real training error"):
+        run_train(_config(tmp_path))
+
+
+def test_resume_warns_when_learning_rates_changed(tmp_path, tiny_model_available, caplog):
+    import logging
+
+    from jenga_nlp.core.config import FusionConfig, FusionType
+    from jenga_nlp.resume import resume_training
+
+    cfg = _config(tmp_path, checkpoints=True)
+    cfg.model.fusion = FusionConfig(type=FusionType.ATTENTION, lr_multiplier=10)
+    run_train(cfg)
+
+    resumed = _config(tmp_path, checkpoints=True)
+    resumed.model.fusion = FusionConfig(type=FusionType.ATTENTION, lr_multiplier=3)  # same 2 groups
+    resumed.training.num_epochs = 2
+    with caplog.at_level(logging.WARNING):
+        results = resume_training(resumed, tmp_path / "run", device="cpu")
+    assert "keeps the saved learning rates" in caplog.text
+    assert [h["epoch"] for h in results["history"]] == [2]

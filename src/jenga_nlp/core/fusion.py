@@ -64,10 +64,10 @@ class AttentionFusion(nn.Module):
 
         self.dropout = nn.Dropout(self.config.dropout)
 
+        # The residual is always used (FusionConfig rejects use_residual: false for attention).
         # Store the gate as a logit so sigmoid(gate) starts exactly at gate_init_value.
-        if self.config.use_residual:
-            init = min(max(self.config.gate_init_value, 1e-4), 1 - 1e-4)
-            self.gate = nn.Parameter(torch.logit(torch.tensor(init)))
+        init = min(max(self.config.gate_init_value, 1e-4), 1 - 1e-4)
+        self.gate = nn.Parameter(torch.logit(torch.tensor(init)))
 
         self.layer_norm = nn.LayerNorm(hidden_size)
         # Diagnostics only: set to True to keep the last attention weights in
@@ -106,9 +106,7 @@ class AttentionFusion(nn.Module):
         if self.store_attention_weights and weights is not None:
             self.last_attention_weights = weights.detach()
 
-        task_vector = self.dropout(self.context_proj(context))  # [B, 1, H], broadcast over tokens
-        if self.config.use_residual:
-            task_vector = torch.sigmoid(self.gate) * task_vector
+        task_vector = torch.sigmoid(self.gate) * self.dropout(self.context_proj(context))  # [B, 1, H]
 
         return self.layer_norm(shared_output + task_vector)
 
