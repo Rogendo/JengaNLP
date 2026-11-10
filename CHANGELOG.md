@@ -39,6 +39,9 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Crashed or interrupted runs end as `FAILED` / `KILLED` in MLflow (they were recorded as `FINISHED`), and
   `evaluate` always closes its tracker run; the MLflow integration adapter no longer passes an invalid status
 - Resuming a run whose optimizer layout changed restarts the optimizer cleanly instead of crashing
+- Attention fusion always uses its residual connection: `use_residual: false` is rejected for
+  `type: attention` (still supported for concatenation). Custom callbacks with an
+  `on_train_end(self, model)` signature keep working.
 - Refactored from monolithic codebase into modular sub-packages
 - Config parsing migrated to Pydantic v2
 
