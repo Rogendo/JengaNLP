@@ -163,14 +163,20 @@ class FusionConfig(ConfigModel):
         le=1.0,
         description="Initial value for the fusion gating mechanism",
     )
-    lr_multiplier: float = Field(
-        default=10.0,
+    lr_multiplier: float | None = Field(
+        default=None,
         gt=0.0,
         description=(
-            "Fusion parameters train at learning_rate * lr_multiplier. Fusion starts from scratch while the "
-            "encoder is pretrained, so at the encoder's fine-tuning rate it barely learns; try 10-50."
+            "Fusion parameters train at learning_rate * lr_multiplier. Default (unset): 10 for attention "
+            "fusion, which starts from scratch and barely learns at the encoder's fine-tuning rate; 1 otherwise."
         ),
     )
+
+    def effective_lr_multiplier(self) -> float:
+        """The multiplier actually used: the configured value, or 10 for attention / 1 otherwise."""
+        if self.lr_multiplier is not None:
+            return self.lr_multiplier
+        return 10.0 if self.type == FusionType.ATTENTION else 1.0
 
 
 class ModelConfig(ConfigModel):

@@ -602,12 +602,12 @@ model:
     dropout: 0.1
     use_residual: true
     gate_init_value: 0.5
-    lr_multiplier: 10        # fusion learning rate = training.learning_rate * lr_multiplier
+    lr_multiplier: 10        # fusion LR = training.learning_rate * lr_multiplier (default: 10 for attention, 1 otherwise)
 ```
 
 With `type: attention`, each task has a learned embedding that attends over the input tokens (padding is masked out). The resulting task-specific context vector is added to every token through a gate, then layer-normalised. Task heads therefore receive different features for the same text.
 
-Fusion layers start from scratch while the encoder is pretrained. At a typical fine-tuning learning rate (e.g. `2e-5`) they barely learn in a short run, which is why `lr_multiplier` defaults to `10`. In a small 4-task test (fraud, sentiment, QA scoring, NER on DistilBERT), eval loss went from 2.08 without fusion to 1.93 at `10` and 1.70 at `50`, but that was one seed on very little data: try `10`-`50` on your own data and compare runs in MLflow (the run parameters include `fusion` and `fusion.lr_multiplier`).
+Fusion layers start from scratch while the encoder is pretrained. At a typical fine-tuning learning rate (e.g. `2e-5`) they barely learn in a short run, which is why `lr_multiplier` defaults to `10` for attention fusion. Concatenation fusion keeps `1` unless you set it. In a small 4-task test (fraud, sentiment, QA scoring, NER on DistilBERT), eval loss went from 2.08 without fusion to 1.93 at `10` and 1.70 at `50`, but that was one seed on very little data: try `10`-`50` on your own data and compare runs in MLflow (the run parameters include `fusion` and `fusion.lr_multiplier`).
 
 Models trained with the attention fusion of earlier pre-releases cannot be loaded; retrain them. That older fusion had no task-specific effect.
 

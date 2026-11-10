@@ -151,3 +151,17 @@ def test_predict_accepts_device():
     assert args.device == "cpu"
     without_device = build_parser().parse_args(["predict", "--config", "c.yaml", "--model-dir", "m", "--text", "hi"])
     assert without_device.device is None
+
+
+def test_backends_status_without_logging_section(tmp_path, capsys):
+    cfg = tmp_path / "nolog.yaml"
+    cfg.write_text(
+        "project_name: x\n"
+        "tasks:\n"
+        "  - name: t\n"
+        "    type: single_label_classification\n"
+        "    data_path: x.jsonl\n"
+        "    heads: [{name: h, num_labels: 2}]\n"
+    )
+    main(["backends", "status", "--config", str(cfg)])
+    assert "training logging: none" in capsys.readouterr().out

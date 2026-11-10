@@ -73,5 +73,5 @@ class WandBAdapter(BaseAdapter):
 
     def finish(self, status: str = "success") -> None:
         if self._wandb is not None:
-            self._wandb.finish()
+            self._wandb.finish(exit_code=0 if status.lower() == "success" else 1)
         super().finish(status=status)

@@ -184,16 +184,20 @@ class LoggingCallback(TrainingCallback):
         elif self.config.service == LoggingService.MLFLOW:
             self._writer.log_metrics(numeric, step=step)
 
-    def close(self) -> None:
-        """Flush and close the logger. Safe to call more than once."""
+    def close(self, status: str = "FINISHED") -> None:
+        """Flush and close the logger. Safe to call more than once.
+
+        Args:
+            status: MLflow run status to record: ``FINISHED``, ``FAILED`` or ``KILLED``.
+        """
         if self._closed:
             return
         self._closed = True
         if self.config.service == LoggingService.TENSORBOARD and self._writer:
             self._writer.close()
         elif self.config.service == LoggingService.MLFLOW and self._writer:
-            self._writer.end_run()
-        logger.info("Logger closed")
+            self._writer.end_run(status=status)
+        logger.info("Logger closed (%s)", status)
 
     def log_artifact(self, path: str | Path, artifact_path: str | None = None) -> None:
         """Upload a file or folder to the tracker (MLflow only; a no-op for TensorBoard)."""
@@ -208,8 +212,8 @@ class LoggingCallback(TrainingCallback):
         except Exception as exc:  # Non-fatal: never fail training over artifact upload
             logger.warning("Could not upload %s to MLflow: %s", path, exc)
 
-    def on_train_end(self, output_dir: str | None = None, **kwargs: Any) -> None:
-        if output_dir and self.config.service == LoggingService.MLFLOW:
+    def on_train_end(self, output_dir: str | None = None, status: str = "FINISHED", **kwargs: Any) -> None:
+        if output_dir and status == "FINISHED" and self.config.service == LoggingService.MLFLOW:
             out = Path(output_dir)
             if self.config.log_model:
                 for name in MODEL_ARTIFACTS:
@@ -218,7 +222,7 @@ class LoggingCallback(TrainingCallback):
             if self.config.log_checkpoints and (out / "checkpoints").is_dir():
                 self.log_artifact(out / "checkpoints", artifact_path="checkpoints")
                 logger.info("Uploaded checkpoints to MLflow artifacts (checkpoints/)")
-        self.close()
+        self.close(status=status)
 
 
 # Files that make up a self-contained, loadable JengaNLP model folder.
@@ -286,8 +290,8 @@ class CheckpointCallback(TrainingCallback):
         greater_is_better: bool = False,
     ) -> None:
         self.config = config
+        # Created on first save, so evaluation-only trainers don't create empty folders.
         self.output_dir = Path(output_dir) / "checkpoints"
-        self.output_dir.mkdir(parents=True, exist_ok=True)
         self.metric_name = metric_name
         self.greater_is_better = greater_is_better
         self.best_value = float("-inf") if greater_is_better else float("inf")

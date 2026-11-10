@@ -32,9 +32,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Attention fusion redesigned: each task's embedding now attends over the tokens (padding masked,
   `num_attention_heads` honoured) and the task context is gated into every token. The previous
   version had no task-specific effect; models trained with it must be retrained.
-- New `model.fusion.lr_multiplier` (default 10): fusion trains faster than the pretrained encoder
+- New `model.fusion.lr_multiplier`: fusion trains faster than the pretrained encoder (default 10 for attention
+  fusion, 1 for concatenation)
 - `training.task_sampling` now implements `proportional` and `temperature` (previously always round-robin)
 - CLI: `predict` accepts `--device`; `evaluate` writes its activity log to the evaluated model folder
+- Crashed or interrupted runs end as `FAILED` / `KILLED` in MLflow (they were recorded as `FINISHED`), and
+  `evaluate` always closes its tracker run; the MLflow integration adapter no longer passes an invalid status
+- Resuming a run whose optimizer layout changed restarts the optimizer cleanly instead of crashing
 - Refactored from monolithic codebase into modular sub-packages
 - Config parsing migrated to Pydantic v2
 

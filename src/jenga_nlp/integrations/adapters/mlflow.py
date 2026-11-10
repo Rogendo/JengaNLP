@@ -65,5 +65,9 @@ class MLflowAdapter(BaseAdapter):
 
     def finish(self, status: str = "success") -> None:
         if self._mlflow is not None:
-            self._mlflow.end_run(status=status)
+            # The runtime speaks success/failed/killed; MLflow needs its RunStatus names.
+            mlflow_status = {"success": "FINISHED", "failed": "FAILED", "killed": "KILLED"}.get(
+                status.lower(), status.upper()
+            )
+            self._mlflow.end_run(status=mlflow_status)
         super().finish(status=status)

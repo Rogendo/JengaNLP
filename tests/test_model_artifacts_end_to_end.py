@@ -194,3 +194,114 @@ def test_evaluate_and_predict_use_the_model_folder_not_the_configs_output_dir(tm
     result = run_predict(stale, model_dir=model_dir, text="message number 3", task_name="clf", device="cpu")
     assert "clf" in result["task_results"]
     assert not (tmp_path / "deleted_training_folder").exists()
+
+
+# ---------------------------------------------------------------------------
+# Review fixes: resume, evaluate and run status
+# ---------------------------------------------------------------------------
+
+def _mlflow_client(cfg):
+    mlflow = pytest.importorskip("mlflow")
+    return mlflow, mlflow.MlflowClient(tracking_uri=cfg.training.logging.tracking_uri)
+
+
+def test_resume_across_optimizer_group_change_keeps_training_fusion(tmp_path, tiny_model_available, monkeypatch):
+    from jenga_nlp.core.config import FusionConfig, FusionType
+    from jenga_nlp.resume import resume_training
+    from jenga_nlp.training.trainer import Trainer
+
+    cfg = _config(tmp_path, checkpoints=True)
+    cfg.model.fusion = FusionConfig(type=FusionType.ATTENTION, lr_multiplier=1.0)  # one param group
+    run_train(cfg)
+
+    resumed = _config(tmp_path, checkpoints=True)
+    resumed.model.fusion = FusionConfig(type=FusionType.ATTENTION)  # auto: 10x -> two param groups
+    resumed.training.num_epochs = 2
+
+    created = []
+    original = Trainer._create_optimizer_and_scheduler
+
+    def spy(self, n):
+        optimizer, scheduler = original(self, n)
+        created.append(optimizer)
+        return optimizer, scheduler
+
+    monkeypatch.setattr(Trainer, "_create_optimizer_and_scheduler", spy)
+    results = resume_training(resumed, tmp_path / "run", device="cpu")
+
+    assert [h["epoch"] for h in results["history"]] == [2]
+    groups = created[-1].param_groups
+    assert len(groups) == 2
+    assert groups[1]["lr"] > 0, "fusion group must keep learning after resume"
+
+
+def test_evaluate_tensorboard_logs_go_to_model_folder(tmp_path, tiny_model_available):
+    # Checkpoints on: the checkpoint callback used to create <output_dir>/checkpoints eagerly.
+    cfg = _config(tmp_path, logging={"service": "tensorboard", "experiment_name": "tb_eval"}, checkpoints=True)
+    run_train(cfg)
+    stale = _config(tmp_path, logging={"service": "tensorboard", "experiment_name": "tb_eval"}, checkpoints=True)
+    stale.training.output_dir = str(tmp_path / "deleted_training_folder")
+
+    run_evaluate(stale, model_dir=tmp_path / "run")
+
+    assert not (tmp_path / "deleted_training_folder").exists()
+    eval_runs = list((tmp_path / "run" / "logs" / "tb_eval").glob("artifacts_test-eval_*"))
+    assert len(eval_runs) == 1
+
+
+def test_resuming_finished_run_logs_eval_metrics(tmp_path, tiny_model_available, monkeypatch):
+    from jenga_nlp.resume import resume_training
+
+    monkeypatch.chdir(tmp_path)
+    cfg = _config(tmp_path, logging=_mlflow_logging(tmp_path), checkpoints=True)
+    run_train(cfg)
+    resume_training(cfg, tmp_path / "run", device="cpu")
+
+    mlflow, client = _mlflow_client(cfg)
+    exp = client.get_experiment_by_name("artifacts_test")
+    latest = client.search_runs([exp.experiment_id], order_by=["attributes.start_time DESC"])[0]
+    assert "eval_loss" in latest.data.metrics
+    assert latest.info.status == "FINISHED"
+
+
+def test_failed_evaluate_closes_mlflow_run_as_failed(tmp_path, tiny_model_available, monkeypatch):
+    from jenga_nlp.training.trainer import Trainer
+
+    monkeypatch.chdir(tmp_path)
+    cfg = _config(tmp_path, logging=_mlflow_logging(tmp_path))
+    run_train(cfg)
+
+    def boom(self):
+        raise RuntimeError("evaluation exploded")
+
+    monkeypatch.setattr(Trainer, "evaluate", boom)
+    with pytest.raises(RuntimeError, match="evaluation exploded"):
+        run_evaluate(cfg, model_dir=tmp_path / "run")
+
+    mlflow, client = _mlflow_client(cfg)
+    assert mlflow.active_run() is None
+    exp = client.get_experiment_by_name("artifacts_test")
+    eval_run = client.search_runs([exp.experiment_id], filter_string="tags.mode = 'eval'")[0]
+    assert eval_run.info.status == "FAILED"
+
+
+@pytest.mark.parametrize(("error", "expected"), [(RuntimeError("boom"), "FAILED"), (KeyboardInterrupt(), "KILLED")])
+def test_crashed_training_is_not_recorded_as_finished(tmp_path, tiny_model_available, monkeypatch, error, expected):
+    from jenga_nlp.training.trainer import Trainer
+
+    monkeypatch.chdir(tmp_path)
+    cfg = _config(tmp_path, logging=_mlflow_logging(tmp_path))
+
+    def explode(self, *args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(Trainer, "_training_step", explode)
+    with pytest.raises(type(error)):
+        run_train(cfg)
+
+    mlflow, client = _mlflow_client(cfg)
+    assert mlflow.active_run() is None
+    exp = client.get_experiment_by_name("artifacts_test")
+    run = client.search_runs([exp.experiment_id])[0]
+    assert run.info.status == expected
+    assert not any(a.path == "model" for a in client.list_artifacts(run.info.run_id))  # no half-model uploaded

@@ -70,6 +70,9 @@ class AttentionFusion(nn.Module):
             self.gate = nn.Parameter(torch.logit(torch.tensor(init)))
 
         self.layer_norm = nn.LayerNorm(hidden_size)
+        # Diagnostics only: set to True to keep the last attention weights in
+        # ``last_attention_weights`` (computing them disables PyTorch's fast path).
+        self.store_attention_weights = False
         self.last_attention_weights: torch.Tensor | None = None
 
     def forward(
@@ -94,9 +97,14 @@ class AttentionFusion(nn.Module):
 
         key_padding_mask = attention_mask == 0 if attention_mask is not None else None
         context, weights = self.attention(
-            query, shared_output, shared_output, key_padding_mask=key_padding_mask, need_weights=True
-        )  # context: [B, 1, H], weights: [B, 1, seq_len]
-        self.last_attention_weights = weights.detach()
+            query,
+            shared_output,
+            shared_output,
+            key_padding_mask=key_padding_mask,
+            need_weights=self.store_attention_weights,
+        )  # context: [B, 1, H]; weights: [B, 1, seq_len] or None
+        if self.store_attention_weights and weights is not None:
+            self.last_attention_weights = weights.detach()
 
         task_vector = self.dropout(self.context_proj(context))  # [B, 1, H], broadcast over tokens
         if self.config.use_residual:

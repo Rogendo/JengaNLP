@@ -257,7 +257,9 @@ class TestCheckpointCallback:
         with tempfile.TemporaryDirectory() as tmpdir:
             config = CheckpointConfig(save_every_n_epochs=1, save_best=True, max_checkpoints=3)
             cb = CheckpointCallback(config, tmpdir)
-            assert (Path(tmpdir) / "checkpoints").exists()
+            # Created lazily on the first save, so evaluation-only trainers leave no empty folders.
+            assert cb.output_dir == Path(tmpdir) / "checkpoints"
+            assert not cb.output_dir.exists()
             assert cb.metric_name == "eval_loss"
             assert cb.greater_is_better is False
 

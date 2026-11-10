@@ -74,28 +74,34 @@ def run_train(config: ExperimentConfig, output_dir: str | Path | None = None, de
 
     runtime = _build_runtime(config)
     runtime.start(run_name=config.project_name, config=config.model_dump(mode="python"), tags={"project_name": config.project_name})
-    runtime.emit_info("loading tokenizer")
+    try:
+        runtime.emit_info("loading tokenizer")
 
-    from transformers import AutoTokenizer
+        from transformers import AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained(config.model.base_model)
-    processor = DataProcessor(config, tokenizer)
-    train_datasets, eval_datasets, _ = processor.process()
-    runtime.emit_info(
-        "datasets processed",
-        payload={"train_tasks": list(train_datasets.keys()), "eval_tasks": list(eval_datasets.keys())},
-    )
-    model = MultiTaskModel.from_config(config)
-    trainer = Trainer(
-        config=config,
-        model=model,
-        tokenizer=tokenizer,
-        train_datasets=train_datasets,
-        eval_datasets=eval_datasets,
-        callbacks=[ActivityEventCallback(runtime=runtime)],
-        resume_from=resume_from,
-    )
-    results = trainer.train()
+        tokenizer = AutoTokenizer.from_pretrained(config.model.base_model)
+        processor = DataProcessor(config, tokenizer)
+        train_datasets, eval_datasets, _ = processor.process()
+        runtime.emit_info(
+            "datasets processed",
+            payload={"train_tasks": list(train_datasets.keys()), "eval_tasks": list(eval_datasets.keys())},
+        )
+        model = MultiTaskModel.from_config(config)
+        trainer = Trainer(
+            config=config,
+            model=model,
+            tokenizer=tokenizer,
+            train_datasets=train_datasets,
+            eval_datasets=eval_datasets,
+            callbacks=[ActivityEventCallback(runtime=runtime)],
+            resume_from=resume_from,
+        )
+        results = trainer.train()
+    except BaseException as exc:
+        # The trainer already closed its own trackers; make sure integration
+        # backends (W&B, MLflow adapter, ...) also record the run as failed.
+        runtime.finish(status="killed" if isinstance(exc, KeyboardInterrupt) else "failed")
+        raise
     runtime.emit_info("training complete", stage=ActivityEventStage.TRAIN, payload={"metrics": results})
     config.to_yaml(Path(config.training.output_dir) / "experiment_config.yaml")
     runtime.finish(status="success")
@@ -119,23 +125,33 @@ def run_evaluate(config: ExperimentConfig, model_dir: str | Path, device: str | 
     )
     from .core.model import load_tokenizer
 
-    tokenizer = load_tokenizer(model_dir, config.model.base_model)
-    _, eval_datasets, _ = DataProcessor(config, tokenizer).process()
-    runtime.emit_info("evaluation datasets processed", payload={"eval_tasks": list(eval_datasets.keys())})
-    model = MultiTaskModel.load(model_dir, config, device=config.training.resolve_device())
-    trainer = Trainer(
-        config=config,
-        model=model,
-        tokenizer=tokenizer,
-        train_datasets={},
-        eval_datasets=eval_datasets,
-        callbacks=[ActivityEventCallback(runtime=runtime)],
-        run_name=f"{config.project_name}-eval",
-        run_tags={"mode": "eval", "model_dir": str(model_dir)},
-    )
-    result = trainer.evaluate()
-    results_path = _write_eval_results(config, model_dir, result, eval_datasets)
-    trainer.log_final_metrics(result, artifact_files=[results_path])
+    trainer = None
+    try:
+        tokenizer = load_tokenizer(model_dir, config.model.base_model)
+        _, eval_datasets, _ = DataProcessor(config, tokenizer).process()
+        runtime.emit_info("evaluation datasets processed", payload={"eval_tasks": list(eval_datasets.keys())})
+        model = MultiTaskModel.load(model_dir, config, device=config.training.resolve_device())
+        trainer = Trainer(
+            config=config,
+            model=model,
+            tokenizer=tokenizer,
+            train_datasets={},
+            eval_datasets=eval_datasets,
+            callbacks=[ActivityEventCallback(runtime=runtime)],
+            run_name=f"{config.project_name}-eval",
+            run_tags={"mode": "eval", "model_dir": str(model_dir)},
+            log_dir=model_dir,
+        )
+        result = trainer.evaluate()
+        results_path = _write_eval_results(config, model_dir, result, eval_datasets)
+        trainer.log_final_metrics(result, artifact_files=[results_path])
+    except BaseException as exc:
+        # Never leave an MLflow run active or the integrations runtime open.
+        killed = isinstance(exc, KeyboardInterrupt)
+        if trainer is not None:
+            trainer.close_trackers("KILLED" if killed else "FAILED")
+        runtime.finish(status="killed" if killed else "failed")
+        raise
     runtime.emit_info("evaluation complete", stage=ActivityEventStage.EVAL, payload={"metrics": result})
     runtime.finish(status="success")
     return result
@@ -198,7 +214,7 @@ def run_predict(
 
 def run_backends(config: ExperimentConfig, command: str) -> None:
     logging_cfg = config.training.logging
-    service = getattr(logging_cfg.service, "value", logging_cfg.service)
+    service = getattr(logging_cfg.service, "value", logging_cfg.service) if logging_cfg is not None else None
     if service and service != "none":
         target = f" ({logging_cfg.tracking_uri})" if getattr(logging_cfg, "tracking_uri", None) else ""
         print(f"training logging: {service}{target}")

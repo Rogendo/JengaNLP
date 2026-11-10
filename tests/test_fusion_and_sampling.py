@@ -70,6 +70,7 @@ def test_padding_tokens_are_ignored():
     fusion = _fusion()
     _train_steps(fusion)
     fusion.eval()
+    fusion.store_attention_weights = True
     x = torch.randn(1, 6, HIDDEN)
     mask = torch.tensor([[1, 1, 1, 1, 0, 0]])
     x_other_padding = x.clone()
@@ -194,5 +195,38 @@ def test_default_multiplier_keeps_single_param_group():
     assert len(optimizer.param_groups) == 1
 
 
-def test_default_fusion_lr_multiplier_is_10():
-    assert FusionConfig(type=FusionType.ATTENTION).lr_multiplier == 10.0
+def test_lr_multiplier_auto_default_depends_on_fusion_type():
+    assert FusionConfig(type=FusionType.ATTENTION).effective_lr_multiplier() == 10.0
+    assert FusionConfig(type=FusionType.CONCATENATION).effective_lr_multiplier() == 1.0
+    assert FusionConfig(type=FusionType.NONE).effective_lr_multiplier() == 1.0
+    assert FusionConfig(type=FusionType.CONCATENATION, lr_multiplier=5).effective_lr_multiplier() == 5.0
+    assert FusionConfig(type=FusionType.ATTENTION, lr_multiplier=1).effective_lr_multiplier() == 1.0
+
+
+def test_concatenation_fusion_keeps_single_param_group_by_default():
+    model = torch.nn.Module()
+    model.encoder = torch.nn.Linear(HIDDEN, HIDDEN)
+    model.fusion = create_fusion(FusionType.CONCATENATION, HIDDEN, TASKS, FusionConfig(type=FusionType.CONCATENATION))
+    fake = SimpleNamespace(
+        model=model,
+        config=SimpleNamespace(model=SimpleNamespace(fusion=FusionConfig(type=FusionType.CONCATENATION))),
+        training_config=SimpleNamespace(learning_rate=1e-4, weight_decay=0.0, warmup_steps=0),
+    )
+    optimizer, _ = Trainer._create_optimizer_and_scheduler(fake, num_training_steps=10)
+    assert len(optimizer.param_groups) == 1
+
+
+def test_attention_weights_are_not_computed_unless_requested():
+    fusion = _fusion()
+    fusion(torch.randn(2, 5, HIDDEN), 0)
+    assert fusion.last_attention_weights is None
+    fusion.store_attention_weights = True
+    fusion(torch.randn(2, 5, HIDDEN), 0)
+    assert fusion.last_attention_weights is not None
+
+
+def test_resume_rejects_pre_2_0_attention_fusion_weights(tmp_path):
+    torch.save({"fusion.attention.0.weight": torch.zeros(1)}, tmp_path / "model.pt")
+    fake = SimpleNamespace(device="cpu", model=torch.nn.Linear(1, 1))
+    with pytest.raises(ValueError, match="pre-2.0 attention fusion"):
+        Trainer._load_resume_model_weights(fake, tmp_path)

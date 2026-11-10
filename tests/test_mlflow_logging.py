@@ -76,3 +76,23 @@ def test_existing_experiment_kind_is_not_overridden(tmp_path, tracking_uri):
     _callback(tmp_path, tracking_uri).close()
 
     assert client.get_experiment(exp_id).tags["mlflow.experimentKind"] == "genai_development"
+
+
+@pytest.mark.parametrize("status", ["FAILED", "KILLED"])
+def test_run_status_is_recorded_on_close(tmp_path, tracking_uri, status):
+    cb = _callback(tmp_path, tracking_uri)
+    run_id = mlflow.active_run().info.run_id
+    cb.on_train_end(model=None, status=status)
+    assert mlflow.MlflowClient(tracking_uri=tracking_uri).get_run(run_id).info.status == status
+    assert mlflow.active_run() is None
+
+
+@pytest.mark.parametrize(("runtime_status", "mlflow_status"), [("success", "FINISHED"), ("failed", "FAILED")])
+def test_mlflow_integration_adapter_maps_runtime_status(tmp_path, tracking_uri, runtime_status, mlflow_status):
+    from jenga_nlp.integrations.adapters.mlflow import MLflowAdapter
+
+    adapter = MLflowAdapter(tracking_uri=tracking_uri, experiment_name="adapter_test")
+    run = adapter.start_run(run_name="r", config={})
+    run_id = (run or mlflow.active_run()).info.run_id
+    adapter.finish(status=runtime_status)
+    assert mlflow.MlflowClient(tracking_uri=tracking_uri).get_run(run_id).info.status == mlflow_status
