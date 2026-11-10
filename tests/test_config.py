@@ -310,3 +310,37 @@ def test_question_answering_alias_uses_qa_formatter():
     canonical = format_result(task("qa_scoring"), logits, sample_idx=0)
     assert alias == canonical
     assert alias["hold"]["prediction"] != [-1.0, 3.0], "raw logits leaked through"
+
+
+# ---------------------------------------------------------------------------
+# Unknown keys are ignored but never silently
+# ---------------------------------------------------------------------------
+
+def test_misspelled_key_warns_with_suggestion_and_is_ignored():
+    from jenga_nlp.core.config import UnknownConfigKeyWarning
+
+    cfg = {**MINIMAL_CONFIG, "model": {"base_model": "distilbert-base-uncased", "fussion": {"type": "attention"}}}
+    with pytest.warns(UnknownConfigKeyWarning, match=r"'fussion' in ModelConfig.*Did you mean 'fusion'\?"):
+        parsed = ExperimentConfig(**cfg)
+    assert parsed.model.fusion is None  # still ignored, as before
+
+
+def test_unknown_nested_key_names_its_section():
+    from jenga_nlp.core.config import UnknownConfigKeyWarning
+
+    cfg = {**MINIMAL_CONFIG, "training": {"learnig_rate": 1e-4}}
+    with pytest.warns(UnknownConfigKeyWarning, match=r"'learnig_rate' in TrainingConfig.*'learning_rate'"):
+        ExperimentConfig(**cfg)
+
+
+def test_valid_and_saved_configs_do_not_warn(tmp_path):
+    import warnings
+
+    from jenga_nlp.core.config import UnknownConfigKeyWarning
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UnknownConfigKeyWarning)
+        cfg = ExperimentConfig(**MINIMAL_CONFIG)
+        path = tmp_path / "saved.yaml"
+        cfg.to_yaml(path)
+        ExperimentConfig.from_yaml(path)  # what JengaNLP writes must read back cleanly

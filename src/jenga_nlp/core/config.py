@@ -10,8 +10,40 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
 
+import difflib
+import warnings
+
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+
+class UnknownConfigKeyWarning(UserWarning):
+    """A config file contains a key that JengaNLP does not recognise (it is ignored)."""
+
+
+class ConfigModel(BaseModel):
+    """Base for all config sections: unknown keys are ignored, but never silently.
+
+    A misspelled key (``fussion:`` instead of ``fusion:``) would otherwise fall
+    back to the default without any sign, so each unknown key raises an
+    :class:`UnknownConfigKeyWarning` naming the section and the closest valid key.
+    """
+
+    @model_validator(mode="before")
+    @classmethod
+    def _warn_on_unknown_keys(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            known = set(cls.model_fields)
+            for key in data:
+                if isinstance(key, str) and key not in known:
+                    close = difflib.get_close_matches(key, sorted(known), n=1, cutoff=0.6)
+                    hint = f" Did you mean '{close[0]}'?" if close else ""
+                    warnings.warn(
+                        f"Unknown config key '{key}' in {cls.__name__} was ignored.{hint}",
+                        UnknownConfigKeyWarning,
+                        stacklevel=2,
+                    )
+        return data
 
 
 # --- Enums ---
@@ -50,7 +82,7 @@ class TaskSamplingStrategy(str, Enum):
 # --- Config Models ---
 
 
-class HeadConfig(BaseModel):
+class HeadConfig(ConfigModel):
     """Configuration for a single prediction head."""
 
     name: str = Field(..., min_length=1, description="Unique name for this head")
@@ -86,7 +118,7 @@ class HeadConfig(BaseModel):
         return self
 
 
-class TaskConfig(BaseModel):
+class TaskConfig(ConfigModel):
     """Configuration for a single task."""
 
     name: str = Field(..., min_length=1, description="Unique name for this task")
@@ -109,7 +141,7 @@ class TaskConfig(BaseModel):
         return v
 
 
-class FusionConfig(BaseModel):
+class FusionConfig(ConfigModel):
     """Configuration for feature fusion between shared encoder and task heads."""
 
     type: FusionType = Field(default=FusionType.NONE, description="Type of fusion to apply")
@@ -141,7 +173,7 @@ class FusionConfig(BaseModel):
     )
 
 
-class ModelConfig(BaseModel):
+class ModelConfig(ConfigModel):
     """Configuration for the shared model architecture."""
 
     base_model: str = Field(
@@ -162,7 +194,7 @@ class ModelConfig(BaseModel):
     )
 
 
-class TokenizerConfig(BaseModel):
+class TokenizerConfig(ConfigModel):
     """Configuration for tokenizer preprocessing."""
 
     max_length: int = Field(
@@ -175,7 +207,7 @@ class TokenizerConfig(BaseModel):
     truncation: bool = Field(default=True, description="Whether to truncate sequences longer than max_length")
 
 
-class LoggingConfig(BaseModel):
+class LoggingConfig(ConfigModel):
     """Configuration for experiment logging."""
 
     service: LoggingService = Field(
@@ -205,7 +237,7 @@ class LoggingConfig(BaseModel):
     )
 
 
-class CheckpointConfig(BaseModel):
+class CheckpointConfig(ConfigModel):
     """Configuration for checkpoint saving."""
 
     save_every_n_epochs: int = Field(
@@ -224,7 +256,7 @@ class CheckpointConfig(BaseModel):
     )
 
 
-class PIIRedactionConfig(BaseModel):
+class PIIRedactionConfig(ConfigModel):
     """Configuration for PII detection and redaction in pipelines."""
 
     enabled: bool = Field(
@@ -249,7 +281,7 @@ class PIIRedactionConfig(BaseModel):
     )
 
 
-class IntegrationConfig(BaseModel):
+class IntegrationConfig(ConfigModel):
     """Configuration for external integrations."""
 
     type: str = Field(..., min_length=1, description="Integration type or name")
@@ -262,7 +294,7 @@ class IntegrationConfig(BaseModel):
     scope: Optional[str] = Field(default=None, description="Optional integration scope")
 
 
-class DataConfig(BaseModel):
+class DataConfig(ConfigModel):
     """Configuration for data processing and splitting."""
 
     test_size: float = Field(
@@ -287,7 +319,7 @@ class DataConfig(BaseModel):
     )
 
 
-class TrainingConfig(BaseModel):
+class TrainingConfig(ConfigModel):
     """Configuration for the training loop."""
 
     output_dir: str = Field(
@@ -373,7 +405,7 @@ class TrainingConfig(BaseModel):
         return "cpu"
 
 
-class ExperimentConfig(BaseModel):
+class ExperimentConfig(ConfigModel):
     """Top-level experiment configuration."""
 
     project_name: str = Field(..., min_length=1, description="Name of the experiment or project")

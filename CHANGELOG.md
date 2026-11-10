@@ -7,7 +7,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [2.0.0] — 2024-07-23
+## [2.0.0] — 2026-11-10
 
 ### Added
 - Full multi-task text NLP framework with shared encoder + pluggable task heads
@@ -25,6 +25,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Training resume: `find_latest_training_state`, `resume_training`
 - `ship_model` workflow: train → evaluate → push to Hub
 - PyPI packaging with `jenga-nlp` CLI entry point
+- Unknown config keys now raise an `UnknownConfigKeyWarning` naming the section and the closest
+  valid key (they are still ignored), so typos such as `fussion:` no longer fail silently
 
 ### Changed
 - Attention fusion redesigned: each task's embedding now attends over the tokens (padding masked,
