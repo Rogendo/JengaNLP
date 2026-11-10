@@ -34,6 +34,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   version had no task-specific effect; models trained with it must be retrained.
 - New `model.fusion.lr_multiplier` (default 10): fusion trains faster than the pretrained encoder
 - `training.task_sampling` now implements `proportional` and `temperature` (previously always round-robin)
+- CLI: `predict` accepts `--device`; `evaluate` writes its activity log to the evaluated model folder
 - Refactored from monolithic codebase into modular sub-packages
 - Config parsing migrated to Pydantic v2
 

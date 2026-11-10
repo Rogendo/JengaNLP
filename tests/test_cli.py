@@ -142,3 +142,12 @@ def test_backends_status_reports_logging_and_integrations(capsys, command_name):
     out = capsys.readouterr().out
     assert "training logging: mlflow (sqlite:///mlflow.db)" in out
     assert "integrations: none configured" in out
+
+
+def test_predict_accepts_device():
+    args = build_parser().parse_args(
+        ["predict", "--config", "c.yaml", "--model-dir", "m", "--text", "hi", "--device", "cpu"]
+    )
+    assert args.device == "cpu"
+    without_device = build_parser().parse_args(["predict", "--config", "c.yaml", "--model-dir", "m", "--text", "hi"])
+    assert without_device.device is None

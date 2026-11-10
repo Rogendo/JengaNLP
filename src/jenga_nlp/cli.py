@@ -57,8 +57,9 @@ class JengaArgumentParser(argparse.ArgumentParser):
         self.exit(2, f"\nError: {message}\n\n{CLI_QUICKSTART}\n")
 
 
-def _build_runtime(config: ExperimentConfig) -> IntegrationRuntime:
-    return IntegrationRuntime(run_dir=config.training.output_dir, integrations=config.integrations)
+def _build_runtime(config: ExperimentConfig, run_dir: str | Path | None = None) -> IntegrationRuntime:
+    """Activity log + integrations; written to ``run_dir`` (default: the config's training.output_dir)."""
+    return IntegrationRuntime(run_dir=run_dir or config.training.output_dir, integrations=config.integrations)
 
 
 def run_train(config: ExperimentConfig, output_dir: str | Path | None = None, device: str | None = None, resume_from: str | Path | None = None) -> dict[str, Any]:
@@ -108,7 +109,9 @@ def run_evaluate(config: ExperimentConfig, model_dir: str | Path, device: str | 
 
     if device:
         config.training.device = device
-    runtime = _build_runtime(config)
+    # Log next to the model being evaluated, not into the config's training.output_dir
+    # (which may point at a deleted or unrelated training folder).
+    runtime = _build_runtime(config, run_dir=model_dir)
     runtime.start(
         run_name=f"{config.project_name}-eval",
         config=config.model_dump(mode="python"),
@@ -176,6 +179,7 @@ def run_predict(
     text: str,
     task_name: str | None = None,
     threshold: float = 0.5,
+    device: str | None = None,
 ) -> Any:
     import tempfile
 
@@ -185,7 +189,9 @@ def run_predict(
     with tempfile.TemporaryDirectory() as tmpdir:
         config_path = Path(tmpdir) / "experiment_config.yaml"
         config.to_yaml(config_path)
-        pipeline = InferencePipeline.from_checkpoint(model_dir=model_dir, config_path=config_path, device=str(get_device("auto")))
+        pipeline = InferencePipeline.from_checkpoint(
+            model_dir=model_dir, config_path=config_path, device=str(get_device(device or "auto"))
+        )
         result = pipeline.predict(text=text, task_name=task_name, threshold=threshold)
         return result.to_dict()
 
@@ -263,6 +269,7 @@ def build_parser() -> argparse.ArgumentParser:
     predict.add_argument("--text", required=True)
     predict.add_argument("--task-name")
     predict.add_argument("--threshold", type=float, default=0.5)
+    predict.add_argument("--device", help="cpu, cuda, mps or auto (default: auto)")
 
     resume = sub.add_parser("resume", help="Resume training from an existing run directory.")
     resume.add_argument("--config", required=True)
@@ -322,7 +329,16 @@ def main(argv: list[str] | None = None) -> None:
         print(run_evaluate(config, model_dir=args.model_dir, device=args.device))
     elif args.command == "predict":
         config = ExperimentConfig.from_yaml(args.config)
-        print(run_predict(config=config, model_dir=args.model_dir, text=args.text, task_name=args.task_name, threshold=args.threshold))
+        print(
+            run_predict(
+                config=config,
+                model_dir=args.model_dir,
+                text=args.text,
+                task_name=args.task_name,
+                threshold=args.threshold,
+                device=args.device,
+            )
+        )
     elif args.command == "resume":
         config = ExperimentConfig.from_yaml(args.config)
         print(resume_training(config, run_dir=args.run_dir, output_dir=args.output_dir, device=args.device))

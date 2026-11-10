@@ -171,3 +171,26 @@ def test_tensorboard_separates_train_and_eval_runs_and_records_params(tmp_path, 
     evaluation.Reload()
     assert "eval/eval_loss" in evaluation.Tags()["scalars"]
     assert "train/loss" not in evaluation.Tags()["scalars"]
+
+
+def test_evaluate_and_predict_use_the_model_folder_not_the_configs_output_dir(tmp_path, tiny_model_available):
+    from jenga_nlp.cli import run_predict
+
+    cfg = _config(tmp_path)
+    run_train(cfg)
+    model_dir = tmp_path / "run"
+    (model_dir / "activity.jsonl").unlink()
+
+    # A config whose training.output_dir points at a folder that no longer exists,
+    # like a config downloaded from MLflow after the training folder was deleted.
+    stale = _config(tmp_path)
+    stale.training.output_dir = str(tmp_path / "deleted_training_folder")
+
+    run_evaluate(stale, model_dir=model_dir)
+    assert not (tmp_path / "deleted_training_folder").exists()
+    events = [json.loads(line) for line in (model_dir / "activity.jsonl").read_text().splitlines()]
+    assert any("artifacts_test-eval" in e.get("message", "") for e in events)
+
+    result = run_predict(stale, model_dir=model_dir, text="message number 3", task_name="clf", device="cpu")
+    assert "clf" in result["task_results"]
+    assert not (tmp_path / "deleted_training_folder").exists()
