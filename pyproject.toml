@@ -67,9 +67,11 @@ dev = [
 jenga-nlp = "jenga_nlp.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/Rogendo/JengaNLP"
+Homepage = "https://rogendo.github.io/JengaNLP/"
+Documentation = "https://rogendo.github.io/JengaNLP/"
 Repository = "https://github.com/Rogendo/JengaNLP"
 "Bug Tracker" = "https://github.com/Rogendo/JengaNLP/issues"
+Changelog = "https://github.com/Rogendo/JengaNLP/blob/main/CHANGELOG.md"
 
 [tool.setuptools.dynamic]
 version = {attr = "jenga_nlp.__version__.__version__"}

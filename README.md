@@ -140,11 +140,13 @@ Experimental features may change or move out of the core package.
 
 ## Documentation
 
-- [Quickstart](https://github.com/Rogendo/JengaNLP/blob/main/docs/quickstart.md)
-- [Configuration reference](https://github.com/Rogendo/JengaNLP/blob/main/docs/configuration.md)
-- [Inference and production serving](https://github.com/Rogendo/JengaNLP/blob/main/docs/inference.md)
-- [Domain-adaptive pretraining (MLM)](https://github.com/Rogendo/JengaNLP/blob/main/docs/domain-adaptation.md) — adapt AfriBERTa / AfroXLMR to Kenyan text (Swahili, Sheng, code-switching)
-- [Full usage guide](https://github.com/Rogendo/JengaNLP/blob/main/docs/usage-guide.md) — every workflow, including experimental ones
+Full documentation: **https://rogendo.github.io/JengaNLP/**
+
+- [Quickstart](https://rogendo.github.io/JengaNLP/quickstart/)
+- [Configuration reference](https://rogendo.github.io/JengaNLP/configuration/)
+- [Inference and production serving](https://rogendo.github.io/JengaNLP/inference/)
+- [Domain-adaptive pretraining (MLM)](https://rogendo.github.io/JengaNLP/domain-adaptation/) — adapt AfriBERTa / AfroXLMR to Kenyan text (Swahili, Sheng, code-switching)
+- [Full usage guide](https://rogendo.github.io/JengaNLP/usage-guide/) — every workflow, including experimental ones
 - [Example configs](https://github.com/Rogendo/JengaNLP/blob/main/examples/configs/) and [fixtures](https://github.com/Rogendo/JengaNLP/blob/main/examples/fixtures/)
 
 ## Roadmap
