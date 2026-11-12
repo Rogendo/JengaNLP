@@ -218,16 +218,19 @@ def format_ner(
                 "confidence": prob,
                 "_count": 1,
             }
-        elif label_str.startswith("I-") and current_entity:
+        elif label_str.startswith("I-"):
             entity_label = label_str[2:]
-            if entity_label == current_entity["label"]:
+            if current_entity and entity_label == current_entity["label"]:
                 # Continue current entity
                 current_entity["end"] = int(char_end)
                 current_entity["confidence"] += prob
                 current_entity["_count"] += 1
             else:
-                # Label mismatch — close current, start new
-                entities.append(current_entity)
+                # No open entity (an I- without a preceding B-) or a label change: start a new
+                # entity rather than dropping it — models often emit I- first, and dropping it
+                # loses recall (critical when NER is used to find PII).
+                if current_entity:
+                    entities.append(current_entity)
                 current_entity = {
                     "start": int(char_start),
                     "end": int(char_end),

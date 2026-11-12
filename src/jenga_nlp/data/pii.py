@@ -132,10 +132,10 @@ def _luhn_check(number: str) -> bool:
 def _is_valid_ke_phone(number: str) -> bool:
     """Validate Kenyan phone number format."""
     digits = re.sub(r'[^\d]', '', number)
-    # Kenyan numbers: 07xx (10 digits) or 254xxx (12 digits) or +254xxx (12 digits)
-    if len(digits) == 10 and digits.startswith('07'):
+    # Kenyan mobile numbers: 07xx / 01xx (10 digits) or 2547xx / 2541xx (12 digits, with or without +)
+    if len(digits) == 10 and digits[:2] in ('07', '01'):
         return True
-    if len(digits) == 12 and digits.startswith('254'):
+    if len(digits) == 12 and digits[:4] in ('2547', '2541'):
         return True
     return False
 
@@ -145,7 +145,8 @@ KENYA_PII_PATTERNS = [
     # Kenyan phone numbers (Safaricom 07xx, Airtel 07xx, +254)
     PIIPattern(
         PIIType.PHONE_KE,
-        r'(?:\+?254|0)[17]\d{8}',
+        # Digits may be grouped with spaces or hyphens, e.g. "+254 722 000 111", "0722-000-111".
+        r'(?<!\d)(?:\+?254[\s-]?|0)[17](?:[\s-]?\d){8}(?!\d)',
         '[PHONE]',
         _is_valid_ke_phone
     ),

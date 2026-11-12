@@ -1,0 +1,10 @@
+{"text": "Habari, mimi ni Zawadi Achieng, naomba msaada kwa mtoto wa jirani anayeteseka nyumbani.", "entities": [{"start": 16, "end": 30, "label": "NAME"}]}
+{"text": "Mama Baraka alipiga simu kutoka Kisumu akiripoti kuwa mtoto hajala tangu jana.", "entities": [{"start": 5, "end": 11, "label": "NAME"}, {"start": 32, "end": 38, "label": "LOCATION"}]}
+{"text": "Afisa Otieno amepanga kutembelea familia ya Wanjiru huko Kibera kesho asubuhi.", "entities": [{"start": 6, "end": 12, "label": "NAME"}, {"start": 44, "end": 51, "label": "NAME"}, {"start": 57, "end": 63, "label": "LOCATION"}]}
+{"text": "Mtoto Amani amefika kwenye makazi salama, tumethibitisha na afisa Kiprono.", "entities": [{"start": 6, "end": 11, "label": "NAME"}, {"start": 66, "end": 73, "label": "NAME"}]}
+{"text": "Juma Mwangi alisema mtoto alionekana mara ya mwisho karibu na soko la Gikomba.", "entities": [{"start": 0, "end": 11, "label": "NAME"}, {"start": 70, "end": 77, "label": "LOCATION"}]}
+{"text": "Bi. Akinyi Odhiambo kutoka Kakamega ameomba ushauri kuhusu kesi ya binti yake.", "entities": [{"start": 4, "end": 19, "label": "NAME"}, {"start": 27, "end": 35, "label": "LOCATION"}]}
+{"text": "Wanjiku na kaka yake Kamau wamehamishiwa kwa shangazi yao huko Nyeri.", "entities": [{"start": 0, "end": 7, "label": "NAME"}, {"start": 21, "end": 26, "label": "NAME"}, {"start": 63, "end": 68, "label": "LOCATION"}]}
+{"text": "Mwalimu Chebet wa shule ya Eldoret ameripoti mtoto aliyeacha kuja shuleni.", "entities": [{"start": 8, "end": 14, "label": "NAME"}, {"start": 27, "end": 34, "label": "LOCATION"}]}
+{"text": "Kesi ya Halima Hassan imehamishiwa kwa afisa wa Mombasa kwa ufuatiliaji.", "entities": [{"start": 8, "end": 21, "label": "NAME"}, {"start": 48, "end": 55, "label": "LOCATION"}]}
+{"text": "Kijana Brian Kipchumba ametoroka nyumbani Nakuru tangu Jumamosi.", "entities": [{"start": 7, "end": 22, "label": "NAME"}, {"start": 42, "end": 48, "label": "LOCATION"}]}

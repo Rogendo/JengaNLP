@@ -1,0 +1,42 @@
+# Demo of the sensitive-data guard rails on CPU, using FICTIONAL data:
+# a "sensitive" source is redacted with an NER model (names, places) on top of regex PII
+# redaction, and training only starts if PII recall on the labelled sample reaches min_recall.
+# The MasakhaNER model is ~560M parameters (about 2.2 GB download on first use).
+# Run: jenga-nlp mlm pii-check --config examples/configs/mlm_cpu_sensitive_demo.yaml
+#      jenga-nlp mlm train     --config examples/configs/mlm_cpu_sensitive_demo.yaml
+
+project_name: mlm_cpu_sensitive_demo
+base_model: Davlan/afro-xlmr-mini
+output_dir: /tmp/jenganlp_mlm_cpu_sensitive_demo
+
+corpus:
+  - name: kenyan_domain
+    path: ../fixtures/mlm_sample_corpus.txt
+    repeat: 2
+  - name: helpline_example
+    path: ../fixtures/mlm_sensitive_example.txt
+    sensitive: true
+    repeat: 1
+
+pii:
+  redact: true
+  ner_model: masakhane/afroxlmr-large-ner-masakhaner-1.0_2.0
+  ner_threshold: 0.3
+  eval_set: ../fixtures/pii_eval_example.jsonl
+  min_recall: 0.95
+
+probes_path: ../fixtures/mlm_probes.jsonl
+
+block_size: 64
+eval_fraction: 0.1
+min_chars: 10
+learning_rate: 1.0e-4
+max_steps: 20
+batch_size: 4
+eval_steps: 10
+save_steps: 1000
+logging_steps: 5
+device: cpu
+
+logging:
+  service: none

@@ -20,7 +20,8 @@ CONFIGS = EXAMPLES / "configs"
 
 EXAMPLE_SCRIPTS = sorted(EXAMPLES.glob("*.py"))
 # Whisper configs use WhisperFineTuningConfig, not ExperimentConfig.
-TEXT_CONFIGS = sorted(p for p in CONFIGS.glob("*.yaml") if "whisper" not in p.name)
+# MLM configs use MLMConfig and are covered by tests/test_mlm.py.
+TEXT_CONFIGS = sorted(p for p in CONFIGS.glob("*.yaml") if "whisper" not in p.name and not p.name.startswith("mlm_"))
 OLD_PACKAGES = ("jenga_ai", "multitask_bert")
 
 
