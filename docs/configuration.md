@@ -1,4 +1,9 @@
-# Configuration Guide
+---
+title: "JengaNLP YAML Configuration Reference for Multi-Task NLP"
+description: "Reference for the JengaNLP YAML config: model, tokenizer, tasks, heads, training, logging and data formats for multi-task NLP training."
+---
+
+# YAML configuration reference
 
 JengaNLP uses YAML configs so training can be reproduced from a file.
 

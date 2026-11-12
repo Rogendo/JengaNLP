@@ -1,4 +1,9 @@
-# Inference Guide
+---
+title: "Production Inference for Multi-Task Transformer Models in Python"
+description: "Serve JengaNLP multi-task transformer models in production: load once, predict single or batch, CLI smoke tests and an HTTP wrapper."
+---
+
+# Production inference: load once, predict many
 
 JengaNLP supports three inference styles.
 
