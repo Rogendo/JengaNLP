@@ -1,3 +1,8 @@
+---
+title: "Domain-Adaptive Pretraining for AfriBERTa and AfroXLMR (Swahili, Sheng)"
+description: "Continue masked-language-model training of AfriBERTa or AfroXLMR on Kenyan text - Swahili, Sheng, code-switching - with NER-based PII redaction and a recall gate, using JengaNLP."
+---
+
 # Domain-adaptive pretraining (MLM)
 
 Pretrained African-language encoders such as **AfriBERTa** and **AfroXLMR** learned Swahili mostly from news and Wikipedia. They have seen little Sheng, Swahili–English code-switching, M-PESA vocabulary or helpline language. **Domain-adaptive pretraining** fixes this: you continue the model's original *masked-language-model* (MLM) training on your own text before fine-tuning it on any task.

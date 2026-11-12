@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+
+{#- Use the page's front-matter `title` for <title>; nav labels in mkdocs.yml stay short. -#}
+{% block htmltitle %}
+  {% if page.is_homepage and page.meta and page.meta.title %}
+    <title>{{ page.meta.title }}</title>
+  {% elif page.meta and page.meta.title %}
+    <title>{{ page.meta.title }} | {{ config.site_name }}</title>
+  {% elif page.title and not page.is_homepage %}
+    <title>{{ page.title | striptags }} | {{ config.site_name }}</title>
+  {% else %}
+    <title>{{ config.site_name }}</title>
+  {% endif %}
+{% endblock %}
