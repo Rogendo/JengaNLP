@@ -1,4 +1,9 @@
-# Quickstart
+---
+title: "JengaNLP Quickstart: Train a Transformer Text Classifier from YAML"
+description: "Install JengaNLP and train, evaluate and run a transformer text classifier on CPU in five minutes from a single YAML config."
+---
+
+# Quickstart: train a text classifier from YAML
 
 This quickstart creates a tiny dataset, writes a config, trains a CPU model, evaluates it, and runs inference.
 

@@ -83,3 +83,6 @@ examples/configs/results
 mlflow.db
 mlruns/
 mlartifacts/
+
+# MkDocs build output
+site/
