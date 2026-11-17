@@ -9,6 +9,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+---
+
+## [2.1.0] — 2026-11-18
+
 ### Added
 - `jenga-nlp mlm`: domain-adaptive masked-language-model pretraining for XLM-R-family encoders
   (AfriBERTa, AfroXLMR): `train`, `evaluate` (base vs adapted pseudo-perplexity per domain) and

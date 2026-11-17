@@ -4,7 +4,7 @@
 
 **Config-driven multi-task NLP.** Train one shared transformer encoder with many task heads — classification, sentiment, NER, regression and checklist-style QA scoring — from a single YAML file, then serve it with a load-once inference pipeline.
 
-> **Status: alpha (2.0.0).** The core text workflow — config → train → evaluate → predict → `InferencePipeline` — is tested and is the supported path. Everything else is marked experimental below.
+> **Status: alpha (2.1.0).** The core text workflow — config → train → evaluate → predict → `InferencePipeline` — is tested and is the supported path. Everything else is marked experimental below.
 
 ## What JengaNLP is, honestly
 
