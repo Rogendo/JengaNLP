@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import warnings
 import wave
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -10,6 +12,7 @@ import pytest
 from jenga_nlp.asr.config import WhisperConfig, WhisperFineTuningConfig
 from jenga_nlp.asr.pipeline import WhisperPipeline, _resolve_device
 from jenga_nlp.asr.training import WhisperTrainer
+from jenga_nlp.core.config import UnknownConfigKeyWarning
 
 
 class _ArgsV5:
@@ -103,3 +106,22 @@ def test_resolve_device():
     assert _resolve_device("cuda") == 0
     assert _resolve_device("cuda:1") == 1
     assert _resolve_device("auto") in (-1, 0)
+
+
+WHISPER_CONFIGS = sorted((Path(__file__).resolve().parent.parent / "examples" / "configs").glob("*whisper*.yaml"))
+
+
+@pytest.mark.parametrize("config", WHISPER_CONFIGS, ids=lambda p: p.name)
+def test_whisper_example_config_validates(config: Path) -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UnknownConfigKeyWarning)  # a misspelled key must fail, not be ignored
+        cfg = WhisperFineTuningConfig.from_yaml(config)
+    assert cfg.model_name.startswith("openai/whisper")
+    if cfg.dataset.source == "manifest":
+        assert cfg.resolve_train_data() and cfg.resolve_eval_data(), "manifest configs need train and eval data"
+        assert cfg.resolve_train_data() != cfg.resolve_eval_data(), "eval must not be the training file"
+
+
+def test_whisper_example_configs_exist() -> None:
+    names = {p.name for p in WHISPER_CONFIGS}
+    assert {"whisper_tiny_sw_cpu_smoke.yaml", "whisper_small_sw_gpu.yaml"} <= names

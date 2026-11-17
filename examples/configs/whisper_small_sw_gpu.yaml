@@ -1,0 +1,49 @@
+# Whisper-small fine-tune for Kenyan Swahili on one GPU (Colab T4 16 GB, A10/A40/L4, ...).
+#
+#   pip install "jenga-nlp[asr]" pandas pyarrow
+#   python examples/prepare_fleurs_asr.py --lang sw_ke --out data/fleurs_sw_ke      # ~3.7 GB download, ~10 h audio
+#   jenga-nlp asr train --config examples/configs/whisper_small_sw_gpu.yaml
+#   python examples/compare_asr_wer.py --manifest data/fleurs_sw_ke/test.jsonl --language sw \
+#       --models openai/whisper-small results/whisper-small-sw
+#
+# Sizing: 2,000 steps x 16 clips is about 10 passes over FLEURS sw_ke train. Rough
+# timings (not measured here): T4 ~1.5-2 s/step, so 1-1.5 h plus evaluation; A40 several
+# times faster. Each checkpoint with optimizer state is ~3 GB; save_total_limit keeps 2.
+# Out of memory on a 16 GB card: batch_size 8 and gradient_accumulation_steps 2.
+# Resume after a Colab disconnect: add `--resume latest`.
+model_name: openai/whisper-small
+language: sw
+task: transcribe
+output_dir: results/whisper-small-sw
+learning_rate: 1.0e-5
+batch_size: 16
+eval_batch_size: 16
+gradient_accumulation_steps: 1
+warmup_steps: 200
+max_steps: 2000
+eval_steps: 250
+save_steps: 250
+logging_steps: 25
+generation_max_length: 225
+gradient_checkpointing: true
+fp16: true
+device: auto
+load_best_model_at_end: true
+metric_for_best_model: wer
+greater_is_better: false
+save_total_limit: 2
+dataloader_num_workers: 2
+# push_to_hub: true            # or pass --push-to-hub --hub-model-id <you>/whisper-small-sw
+# hub_model_id: <your-username>/whisper-small-sw-ke
+# hub_private: true
+dataset:
+  source: manifest
+  train_manifest: data/fleurs_sw_ke/train.jsonl
+  eval_manifest: data/fleurs_sw_ke/validation.jsonl
+  streaming: false
+preprocessing:
+  sampling_rate: 16000
+  min_audio_duration_s: 0.5
+  max_audio_duration_s: 30.0
+# integrations:                 # live metrics; needs `pip install mlflow` or tensorboard
+#   - type: tensorboard
