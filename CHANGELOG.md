@@ -19,6 +19,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   require it plus a labelled sample, and training refuses to start unless PII recall on that sample
   reaches `pii.min_recall`; they are also capped at 2x repetition and private-only on the Hub.
   Output is a standard Hugging Face model usable as `model.base_model`. See `docs/domain-adaptation.md`.
+- Colab starter notebook (`notebooks/jenganlp_quickstart.ipynb`, built by
+  `scripts/build_starter_notebook.py`): install from PyPI, train a Swahili/Sheng fraud classifier,
+  evaluate, predict, load-once inference and a two-task model with attention fusion. Linked from the
+  README, docs and PyPI.
 
 ### Fixed
 - The NER decoder dropped entities whose first token was tagged `I-` (no preceding `B-`), losing recall.

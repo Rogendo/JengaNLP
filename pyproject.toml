@@ -69,6 +69,7 @@ jenga-nlp = "jenga_nlp.cli:main"
 [project.urls]
 Homepage = "https://rogendo.github.io/JengaNLP/"
 Documentation = "https://rogendo.github.io/JengaNLP/"
+"Try in Colab" = "https://colab.research.google.com/github/Rogendo/JengaNLP/blob/main/notebooks/jenganlp_quickstart.ipynb"
 Repository = "https://github.com/Rogendo/JengaNLP"
 "Bug Tracker" = "https://github.com/Rogendo/JengaNLP/issues"
 Changelog = "https://github.com/Rogendo/JengaNLP/blob/main/CHANGELOG.md"

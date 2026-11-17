@@ -27,6 +27,7 @@ JengaNLP is built on PyTorch and Hugging Face Transformers. For a single classif
 
 | Guide | What you will do |
 |---|---|
+| [Starter notebook (Colab)](https://colab.research.google.com/github/Rogendo/JengaNLP/blob/main/notebooks/jenganlp_quickstart.ipynb) | Run everything in your browser: train a Swahili/Sheng fraud classifier and a two-task model, with nothing to install on your own machine. |
 | [Quickstart](quickstart.md) | Train, evaluate and run a text classifier on CPU in five minutes. |
 | [Task types](tasks/index.md) | Classification, sentiment, multi-label, NER, regression, QA scoring and multi-task learning. |
 | [Configuration](configuration.md) | Every section of the YAML config and how it maps to the code. |
