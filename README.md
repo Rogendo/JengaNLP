@@ -1,5 +1,7 @@
 # JengaNLP
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Rogendo/JengaNLP/blob/main/notebooks/jenganlp_quickstart.ipynb)
+
 **Config-driven multi-task NLP.** Train one shared transformer encoder with many task heads — classification, sentiment, NER, regression and checklist-style QA scoring — from a single YAML file, then serve it with a load-once inference pipeline.
 
 > **Status: alpha (2.0.0).** The core text workflow — config → train → evaluate → predict → `InferencePipeline` — is tested and is the supported path. Everything else is marked experimental below.
@@ -40,6 +42,8 @@ pip install -e ".[dev]"
 ```
 
 ## Quickstart (5 minutes, CPU)
+
+**Try it in your browser first:** the [starter notebook](https://colab.research.google.com/github/Rogendo/JengaNLP/blob/main/notebooks/jenganlp_quickstart.ipynb) installs `jenga-nlp` in Google Colab and trains a Swahili/Sheng M-PESA fraud classifier, then a two-task model, with no local setup. The same steps on your own machine:
 
 **1. Data** — JSONL, JSON or CSV with a text column and a label column:
 

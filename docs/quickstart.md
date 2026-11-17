@@ -9,6 +9,9 @@ This quickstart creates a tiny dataset, writes a config, trains a CPU model, eva
 
 The model uses `hf-internal-testing/tiny-random-bert`, which is intentionally tiny and random. Use it to verify workflow mechanics, not production quality.
 
+!!! tip "Prefer the browser?"
+    The [starter notebook](https://colab.research.google.com/github/Rogendo/JengaNLP/blob/main/notebooks/jenganlp_quickstart.ipynb) runs these steps in Google Colab with a Swahili/Sheng dataset, with nothing to install on your own machine.
+
 ## 1. Create A Dataset
 
 ```bash
