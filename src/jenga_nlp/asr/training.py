@@ -300,13 +300,15 @@ class WhisperTrainer:
             kwargs["max_steps"] = self.config.max_steps
         else:
             kwargs["num_train_epochs"] = self.config.num_epochs
-        try:
+        supported = _supported_args(args_cls)
+        if supported is None:  # signature unavailable (e.g. a test double): pass everything
             return args_cls(**kwargs)
-        except TypeError as exc:
-            if "evaluation_strategy" not in str(exc):
-                raise
+        # transformers renamed evaluation_strategy -> eval_strategy and removed save_safetensors in v5
+        if "evaluation_strategy" not in supported and "eval_strategy" in supported:
             kwargs["eval_strategy"] = kwargs.pop("evaluation_strategy")
-            return args_cls(**kwargs)
+        if self.config.device == "cpu":
+            kwargs["use_cpu" if "use_cpu" in supported else "no_cuda"] = True
+        return args_cls(**{key: value for key, value in kwargs.items() if key in supported})
 
     @staticmethod
     def _build_trainer(trainer_cls: Any, trainer_kwargs: dict[str, Any], processor: Any) -> Any:
@@ -314,3 +316,15 @@ class WhisperTrainer:
             return trainer_cls(**trainer_kwargs, processing_class=processor.feature_extractor)
         except TypeError:
             return trainer_cls(**trainer_kwargs, tokenizer=processor.feature_extractor)
+
+
+def _supported_args(args_cls: Any) -> set[str] | None:
+    import inspect
+
+    try:
+        params = inspect.signature(args_cls.__init__).parameters
+    except (TypeError, ValueError):
+        return None
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return None
+    return set(params) - {"self"}

@@ -30,7 +30,7 @@ class WhisperPipeline:
                 "Whisper transcription requires `transformers` and its ASR dependencies."
             ) from exc
 
-        device = 0 if self.config.device == "cuda" else -1
+        device = _resolve_device(self.config.device)
         try:
             self._pipeline = hf_pipeline(
                 task="automatic-speech-recognition",
@@ -46,9 +46,26 @@ class WhisperPipeline:
         return self._pipeline
 
     def transcribe(self, audio: str | Path, *, language: str | None = None) -> dict[str, Any]:
-        """Transcribe a single audio file path."""
+        """Transcribe a single audio file path.
+
+        Audio is decoded with JengaNLP's own loader (soundfile/librosa, resampled to 16 kHz), so
+        ffmpeg is not required. Decoding is forced to ``language`` (or the configured language)
+        instead of letting Whisper guess it.
+        """
+        from .config import WhisperPreprocessingConfig
+        from .loaders import load_audio_file
+
         pipe = self._load()
-        result = pipe(str(audio))
+        # no duration filter at inference: long files are chunked by the pipeline
+        payload = load_audio_file(audio, WhisperPreprocessingConfig(min_audio_duration_s=0.0, max_audio_duration_s=1e9))
+        if payload is None:
+            raise ValueError(f"Could not read audio file: {audio}")
+        lang = language or self.config.language
+        generate_kwargs = {"task": self.config.task}
+        if lang:
+            generate_kwargs["language"] = lang
+        result = pipe({"raw": payload["array"], "sampling_rate": payload["sampling_rate"]},
+                      generate_kwargs=generate_kwargs)
         text = result.get("text") if isinstance(result, dict) else str(result)
         return {
             "text": text,
@@ -56,3 +73,17 @@ class WhisperPipeline:
             "model_name": self.config.model_name,
             "audio": str(audio),
         }
+
+
+def _resolve_device(device: str) -> int:
+    """Map cpu/cuda/auto to the transformers pipeline device index (-1 = CPU)."""
+    if device == "cpu":
+        return -1
+    if device.startswith("cuda"):
+        return int(device.split(":", 1)[1]) if ":" in device else 0
+    try:
+        import torch
+
+        return 0 if torch.cuda.is_available() else -1
+    except Exception:  # pragma: no cover - torch missing
+        return -1
