@@ -24,6 +24,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - The NER decoder dropped entities whose first token was tagged `I-` (no preceding `B-`), losing recall.
 - Kenyan phone redaction missed numbers written with spaces or hyphens (`+254 722 000 111`,
   `0722-000-111`) and never redacted `01x` numbers.
+- Whisper ASR now works end to end with current `transformers`: `jenga-nlp asr train` crashed before
+  training on transformers 5 (removed `save_safetensors` / renamed `evaluation_strategy`) and ignored
+  `device: cpu`; `jenga-nlp asr serve` needed ffmpeg to read audio, never applied `--language`, and never
+  used the GPU with `device: auto`. Audio is now decoded with JengaNLP's own loader (WAV/FLAC/OGG/MP3).
 
 ---
 

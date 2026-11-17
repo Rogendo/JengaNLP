@@ -24,6 +24,8 @@ Relative `data_path` values are resolved against this folder, so the `../fixture
 | `multi_task_3way_fusion.yaml` | 3 tasks with attention fusion |
 | `qa_scoring.yaml` | QA scoring — **dataset not bundled**, set `data_path` to your own data |
 | `jenganlp_whisper_somali.yaml` | Whisper ASR fine-tuning (experimental; use `jenga-nlp asr train`) |
+| `whisper_tiny_sw_cpu_smoke.yaml` | Whisper-tiny Kenyan Swahili smoke test on CPU (~12 min); data from `examples/prepare_fleurs_asr.py` |
+| `whisper_small_sw_gpu.yaml` | Whisper-small Kenyan Swahili fine-tune on one GPU (T4/A40); score with `examples/compare_asr_wer.py` |
 
 ## Commands
 

@@ -1,0 +1,35 @@
+# Whisper-tiny Kenyan Swahili smoke test on CPU (~12 min): proves train -> save -> transcribe works.
+# Trains on 80 clips of FLEURS validation, scores on 20 clips of FLEURS test (different sentences).
+#
+#   python examples/prepare_fleurs_asr.py --lang sw_ke --out data/fleurs_sw_ke --splits validation test  # ~620 MB
+#   jenga-nlp asr train --config examples/configs/whisper_tiny_sw_cpu_smoke.yaml
+#   jenga-nlp asr serve --model-name results/whisper-tiny-sw-smoke --language sw --audio <clip.wav>
+#
+# Reference run (73 train / 20 held-out clips): WER 104.8 -> 69.2, CER 50.3 -> 22.2.
+# This checks the workflow, not quality: use whisper_small_sw_gpu.yaml for a real model.
+model_name: openai/whisper-tiny
+language: sw
+task: transcribe
+output_dir: results/whisper-tiny-sw-smoke
+learning_rate: 3.0e-5
+batch_size: 8
+eval_batch_size: 8
+warmup_steps: 10
+max_steps: 80
+eval_steps: 40
+save_steps: 40
+logging_steps: 10
+generation_max_length: 128
+load_best_model_at_end: true
+metric_for_best_model: wer
+greater_is_better: false
+save_total_limit: 1
+device: cpu
+fp16: false
+dataset:
+  source: manifest
+  train_manifest: data/fleurs_sw_ke/validation.jsonl
+  eval_manifest: data/fleurs_sw_ke/test.jsonl
+  num_train_samples: 80
+  num_eval_samples: 20
+  streaming: false
